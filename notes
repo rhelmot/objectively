@@ -1,0 +1,5 @@
+Concept: a bytecode interpreter for an object oriented language that has the power to implement virtualization and thus an operating system.
+the challenge is at first to solve a simple reversing challenge in the VM, then to pwn a service giving you a foothold on a machine, then getting LPE on that machine by pwning its kernel, then using the ability to send crafted packets to pwn a router.
+
+I'm thinking the language is similar in concept to python - nonprimitive objects have a type (another object) and a value (a dict)
+the bytes object in the language has a subclass which is a closure - an executable code object which contans both bytecode and a dict for its environment
