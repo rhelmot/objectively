@@ -3,3 +3,5 @@ the challenge is at first to solve a simple reversing challenge in the VM, then 
 
 I'm thinking the language is similar in concept to python - nonprimitive objects have a type (another object) and a value (a dict)
 the bytes object in the language has a subclass which is a closure - an executable code object which contans both bytecode and a dict for its environment
+
+one possible bug avenue is exception handling leaving stuff in an incomplete state. a sneaky avenue for accomplishing this would be since there is no type checking for number of arguments, an exception could be raised by accessing args[n]
