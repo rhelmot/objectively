@@ -1,7 +1,8 @@
-use shredder::{Gc, Scan};
+use shredder::{Gc, Scan, ToScan};
 use std::collections::HashMap;
 use lazy_static::lazy_static;
 use std::sync::Mutex;
+use shredder::marker::GcDrop;
 
 pub enum ExceptionKind {
     AttributeError,
@@ -33,7 +34,7 @@ impl Exception {
     }
 }
 
-pub trait ObjectTrait: Scan {
+pub trait ObjectTrait: GcDrop + Scan + ToScan + Send + Sync {
     fn get_attr(&self, name: &str) -> Result<Object, Exception> {
         Err(Exception::attribute_error(name))
     }
@@ -58,7 +59,7 @@ pub type Object = Gc<dyn ObjectTrait>;
 pub struct TypeClassObject {}
 impl ObjectTrait for TypeClassObject {
     fn get_type(&self) -> Object {
-        SINGLETON_TYPE.clone()
+        SINGLETON_TYPE.lock().unwrap().clone()
     }
 }
 
@@ -66,7 +67,7 @@ impl ObjectTrait for TypeClassObject {
 pub struct BuiltinClassObject {}
 impl ObjectTrait for BuiltinClassObject {
     fn get_type(&self) -> Object {
-        SINGLETON_TYPE.clone()
+        SINGLETON_TYPE.lock().unwrap().clone()
     }
 }
 
@@ -79,6 +80,6 @@ pub struct BasicObject {
 }
 
 lazy_static! {
-    pub static ref SINGLETON_TYPE: Mutex<Object> = Mutex::new(Gc::new(TypeClassObject{}));
-    pub static ref SINGLETON_BUILTIN: Mutex<Object> = Mutex::new(Gc::new(BuiltinClassObject{}));
+    pub static ref SINGLETON_TYPE: Mutex<Object> = Mutex::new(Gc::from_box(Box::new(TypeClassObject{})));
+    pub static ref SINGLETON_BUILTIN: Mutex<Object> = Mutex::new(Gc::from_box(Box::new(BuiltinClassObject{})));
 }
