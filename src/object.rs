@@ -57,13 +57,13 @@ pub trait ObjectTrait: GcDrop + Scan + ToScan + Send + Sync {
 pub type Object = Gc<dyn ObjectTrait>;
 
 #[derive(Scan)]
-pub struct TypeClassObject<F: FnMut(Object, TupleObject) -> Result<Object, Exception>> {
+pub struct TypeClassObject {
     pub name: String,
     pub base_class: Object,
     pub members: HashMap<String, Object>,
-    pub constructor: F,
+    pub constructor: &'static fn(Object, TupleObject) -> Result<Object, Exception>,
 }
-impl ObjectTrait for TypeClassObject<F> {
+impl ObjectTrait for TypeClassObject {
     fn get_type(&self) -> Object {
         SINGLETON_TYPE.lock().unwrap().clone()
     }
@@ -74,7 +74,7 @@ pub struct TupleObject {
     // Can we make TupleObject unsized somehow and have the data be directly part of the struct, like the C?
     pub data: Vec<Object>,
 }
-impl ObjectTrait for TypeClassObject {
+impl ObjectTrait for TupleObject {
     fn get_type(&self) -> Object {
         SINGLETON_TYPE.lock().unwrap().clone()
     }
@@ -97,6 +97,11 @@ pub struct BasicObject {
 }
 
 lazy_static! {
-    pub static ref SINGLETON_TYPE: Mutex<Object> = Mutex::new(Gc::from_box(Box::new(TypeClassObject{})));
+    pub static ref SINGLETON_TYPE: Mutex<Object> = Mutex::new(Gc::from_box(Box::new(TypeClassObject{
+        name: todo!(),
+        base_class: todo!(),
+        members: todo!(),
+        constructor: &{|_, _| todo!()},
+    })));
     pub static ref SINGLETON_BUILTIN: Mutex<Object> = Mutex::new(Gc::from_box(Box::new(BuiltinClassObject{})));
 }
