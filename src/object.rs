@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use lazy_static::lazy_static;
 use std::sync::Mutex;
 use shredder::marker::GcDrop;
+use std::vec::Vec;
 
 pub enum ExceptionKind {
     AttributeError,
@@ -56,7 +57,23 @@ pub trait ObjectTrait: GcDrop + Scan + ToScan + Send + Sync {
 pub type Object = Gc<dyn ObjectTrait>;
 
 #[derive(Scan)]
-pub struct TypeClassObject {}
+pub struct TypeClassObject<F: FnMut(Object, TupleObject) -> Result<Object, Exception>> {
+    pub name: String,
+    pub base_class: Object,
+    pub members: HashMap<String, Object>,
+    pub constructor: F,
+}
+impl ObjectTrait for TypeClassObject<F> {
+    fn get_type(&self) -> Object {
+        SINGLETON_TYPE.lock().unwrap().clone()
+    }
+}
+
+#[derive(Scan)]
+pub struct TupleObject {
+    // Can we make TupleObject unsized somehow and have the data be directly part of the struct, like the C?
+    pub data: Vec<Object>,
+}
 impl ObjectTrait for TypeClassObject {
     fn get_type(&self) -> Object {
         SINGLETON_TYPE.lock().unwrap().clone()
