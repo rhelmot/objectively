@@ -182,6 +182,7 @@ name = "objectively"
 version = "0.1.0"
 dependencies = [
  "lazy_static",
+ "qcell",
  "shredder",
  "shredder_derive",
 ]
@@ -224,6 +225,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9f5105d4fdaab20335ca9565e106a5d9b82b6219b5ba735731124ac6711d23d"
 dependencies = [
  "unicode-xid",
+]
+
+[[package]]
+name = "qcell"
+version = "0.4.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2e2b4c7d8d615d32bb11eb895985dab6a136958fb35cbc46d44c2b7efee8ba9a"
+dependencies = [
+ "once_cell",
 ]
 
 [[package]]

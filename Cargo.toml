@@ -7,5 +7,9 @@ edition = "2018"
 
 [dependencies]
 lazy_static = "1.4"
-shredder = "0.2.0"
 shredder_derive = "0.2.0"
+qcell = "0.4.3"
+
+[dependencies.shredder]
+version = "0.2.0"
+features = ["nightly-features"]

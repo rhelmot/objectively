@@ -1,9 +1,10 @@
+use lazy_static::lazy_static;
+use shredder::marker::GcDrop;
 use shredder::{Gc, Scan, ToScan};
 use std::collections::HashMap;
-use lazy_static::lazy_static;
 use std::sync::Mutex;
-use shredder::marker::GcDrop;
 use std::vec::Vec;
+use crate::gcell::{GCell, GCellOwner};
 
 pub enum ExceptionKind {
     AttributeError,
@@ -22,7 +23,7 @@ impl Exception {
         Exception {
             kind: ExceptionKind::AttributeError,
             msg: format!("No such attribute: {}", name),
-            args: vec!(), // TODO make an object out of name
+            args: vec![], // TODO make an object out of name
         }
     }
 
@@ -30,7 +31,7 @@ impl Exception {
         Exception {
             kind: ExceptionKind::TypeError,
             msg: format!("{}", explanation),
-            args: vec!(),
+            args: vec![],
         }
     }
 }
@@ -54,7 +55,7 @@ pub trait ObjectTrait: GcDrop + Scan + ToScan + Send + Sync {
 
     fn get_type(&self) -> Object;
 }
-pub type Object = Gc<dyn ObjectTrait>;
+pub type Object = Gc<GCell<dyn ObjectTrait>>;
 
 #[derive(Scan)]
 pub struct TypeClassObject {
@@ -65,7 +66,7 @@ pub struct TypeClassObject {
 }
 impl ObjectTrait for TypeClassObject {
     fn get_type(&self) -> Object {
-        SINGLETON_TYPE.lock().unwrap().clone()
+        SINGLETON_TYPE.clone()
     }
 }
 
@@ -76,7 +77,7 @@ pub struct TupleObject {
 }
 impl ObjectTrait for TupleObject {
     fn get_type(&self) -> Object {
-        SINGLETON_TYPE.lock().unwrap().clone()
+        SINGLETON_TYPE.clone()
     }
 }
 
@@ -84,7 +85,7 @@ impl ObjectTrait for TupleObject {
 pub struct BuiltinClassObject {}
 impl ObjectTrait for BuiltinClassObject {
     fn get_type(&self) -> Object {
-        SINGLETON_TYPE.lock().unwrap().clone()
+        SINGLETON_TYPE.clone()
     }
 }
 
@@ -97,11 +98,31 @@ pub struct BasicObject {
 }
 
 lazy_static! {
-    pub static ref SINGLETON_TYPE: Mutex<Object> = Mutex::new(Gc::from_box(Box::new(TypeClassObject{
-        name: todo!(),
-        base_class: todo!(),
-        members: todo!(),
-        constructor: &{|_, _| todo!()},
-    })));
-    pub static ref SINGLETON_BUILTIN: Mutex<Object> = Mutex::new(Gc::from_box(Box::new(BuiltinClassObject{})));
+    pub static ref GIL: Mutex<GCellOwner> = Mutex::new(GCellOwner::make());
+    pub static ref OBJECT_TYPE: Object = {
+        #[derive(Scan)]
+        struct Dummy;
+        impl ObjectTrait for Dummy {
+            fn get_type(&self) -> Object {
+                unimplemented!("If this is ever called something has gone horribly wrong")
+            }
+        }
+
+        let ty = Gc::new(GCell::new(TypeClassObject {
+            name: "Object".to_string(),
+            base_class: Gc::new(GCell::new(Dummy)),
+            members: HashMap::new(),
+            constructor: &{ |_, _| Ok(OBJECT_TYPE.clone()) },
+        }));
+        ty.get().rw(&mut GIL.lock().unwrap()).base_class = ty.clone();
+        ty
+    };
+    pub static ref SINGLETON_TYPE: Object = Gc::new(GCell::new(TypeClassObject {
+        name: "Type".to_string(),
+        base_class: OBJECT_TYPE.clone(),
+        members: HashMap::new(),
+        constructor: &{ |_, _| Ok(SINGLETON_TYPE.clone()) },
+    }));
+    pub static ref SINGLETON_BUILTIN: Object =
+        Gc::new(GCell::new(BuiltinClassObject {}));
 }
