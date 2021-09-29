@@ -7,8 +7,10 @@ edition = "2018"
 
 [dependencies]
 lazy_static = "1.4"
-shredder_derive = "0.2.0"
 qcell = "0.4.3"
+parking_lot = "0.11.2"
+shredder_derive = "0.2.0"
+take_mut = "0.2.2"
 
 [dependencies.shredder]
 version = "0.2.0"

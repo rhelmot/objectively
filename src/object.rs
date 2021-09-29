@@ -5,8 +5,9 @@ use shredder::marker::GcDrop;
 use shredder::{Gc, Scan, ToScan};
 use std::collections::HashMap;
 use std::convert::{TryInto};
-use std::sync::Mutex;
 use std::vec::Vec;
+
+use parking_lot::{Mutex, MutexGuard};
 
 pub type Object = Gc<GCell<dyn ObjectTrait>>;
 pub type GenericResult<T> = Result<T, Exception>;
@@ -181,6 +182,13 @@ pub struct BasicObject {
     pub type_: Object,
 }
 
+fn yield_gil(guard: &mut MutexGuard<GCellOwner>) {
+    take_mut::take(guard, |guard| {
+        drop(guard);
+        GIL.lock()
+    })
+}
+
 lazy_static! {
     pub static ref GIL: Mutex<GCellOwner> = Mutex::new(GCellOwner::make());
     pub static ref OBJECT_TYPE: Object = {
@@ -198,7 +206,7 @@ lazy_static! {
             members: HashMap::new(),
             constructor: &(builtins::object_constructor as ObjectSelfFunction),
         }));
-        ty.get().rw(&mut GIL.lock().unwrap()).base_class = ty.clone();
+        ty.get().rw(&mut GIL.lock()).base_class = ty.clone();
         ty
     };
     pub static ref G_TYPE: Object = Gc::new(GCell::new(TypeObject {
