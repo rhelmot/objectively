@@ -125,7 +125,7 @@ impl ObjectTrait for TupleObject {
                 }
             }
         } else {
-            Err(Exception::attribute_error(name));
+            Err(Exception::attribute_error(name))
         }
     }
 
