@@ -1,42 +1,19 @@
+use crate::builtins;
+use crate::gcell::{GCell, GCellOwner};
 use lazy_static::lazy_static;
 use shredder::marker::GcDrop;
 use shredder::{Gc, Scan, ToScan};
 use std::collections::HashMap;
+use std::convert::{TryInto};
 use std::sync::Mutex;
 use std::vec::Vec;
-use crate::gcell::{GCell, GCellOwner};
-use crate::builtins;
-use std::convert::{TryInto, Infallible};
-use std::ops::{Try, ControlFlow, FromResidual};
 
 pub type Object = Gc<GCell<dyn ObjectTrait>>;
-pub struct GenericResult<T>(pub GCellOwner, pub Result<T, Exception>);
+pub type GenericResult<T> = Result<T, Exception>;
 pub type NullResult = GenericResult<()>;
 pub type ObjectResult = GenericResult<Object>;
 pub type VecResult = GenericResult<Vec<Object>>;
-pub type ObjectSelfFunction = fn(GCellOwner, Object, TupleObject) -> ObjectResult;
-
-impl<T> Try for GenericResult<T> {
-    type Output = (GCellOwner, T);
-    type Residual = Result<Infallible, (GCellOwner, Exception)>;
-
-    fn from_output(output: Self::Output) -> Self {
-        GenericResult(output.0, Ok(output.1))
-    }
-
-    fn branch(self) -> ControlFlow<Self::Residual, Self::Output> {
-        match self.1 {
-            Ok(o) => ControlFlow::Continue((self.0, o)),
-            Err(e) => ControlFlow::Break(Err((self.0, e)))
-        }
-    }
-}
-impl<T> FromResidual for GenericResult<T> {
-    fn from_residual(residual: <Self as Try>::Residual) -> Self {
-        let err = residual.unwrap_err();
-        GenericResult(err.0, Err(err.1))
-    }
-}
+pub type ObjectSelfFunction = fn(&mut GCellOwner, Object, TupleObject) -> ObjectResult;
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum ExceptionKind {
@@ -81,29 +58,36 @@ impl Exception {
 }
 
 pub trait ObjectTrait: GcDrop + Scan + ToScan + Send + Sync {
-    fn get_attr(&self, mut gil: GCellOwner, name: &str) -> ObjectResult {
-        GenericResult(gil, Err(Exception::attribute_error(name)))
+    fn get_attr(&self, name: &str) -> ObjectResult {
+        Err(Exception::attribute_error(name))
     }
 
-    fn set_attr(&mut self, mut gil: GCellOwner, name: &str, value: Object) -> NullResult {
-        GenericResult(gil, Err(Exception::attribute_error(name)))
+    fn set_attr(&mut self, name: &str, _value: Object) -> NullResult {
+        Err(Exception::attribute_error(name))
     }
 
-    fn del_attr(&mut self, mut gil: GCellOwner, name: &str) -> NullResult {
-        GenericResult(gil, Err(Exception::attribute_error(name)))
+    fn del_attr(&mut self, name: &str) -> NullResult {
+        Err(Exception::attribute_error(name))
     }
 
-    fn call(&mut self, mut gil: GCellOwner, args: TupleObject) -> ObjectResult {
-        GenericResult(gil, Err(Exception::type_error("Cannot call")))
+    fn call(&mut self, _args: TupleObject) -> ObjectResult {
+        Err(Exception::type_error("Cannot call"))
     }
 
     fn get_type(&self) -> Object;
 
-    fn as_tuple(&self) -> Option<&TupleObject> { None }
-    fn as_int(&self) -> Option<&IntObject> { None }
+    fn as_tuple(&self) -> Option<&TupleObject> {
+        None
+    }
+    fn as_int(&self) -> Option<&IntObject> {
+        None
+    }
 
     fn into_gc(self) -> Object
-        where Self: Sized, Self: 'static {
+    where
+        Self: Sized,
+        Self: 'static,
+    {
         Gc::new(GCell::new(self))
     }
 }
@@ -127,16 +111,22 @@ pub struct TupleObject {
 }
 
 impl ObjectTrait for TupleObject {
-    fn get_attr(&self, mut gil: GCellOwner, name: &str) -> ObjectResult {
-        let result = if name == "len" {
+    fn get_attr(&self, name: &str) -> ObjectResult {
+        if name == "len" {
             match self.data.len().try_into() {
-                Ok(v) => IntObject::new(v),
-                Err(_) => return GenericResult(gil, Err(Exception::overflow_error("could not fit tuple length into integer object")))
+                Ok(v) => {
+                    let int = IntObject::new(v);
+                    Ok(int.into_gc())
+                },
+                Err(_) => {
+                    Err(Exception::overflow_error(
+                        "could not fit tuple length into integer object",
+                    ))
+                }
             }
         } else {
-            return GenericResult(gil, Err(Exception::attribute_error(name)))
-        };
-        GenericResult(gil, Ok(result.into_gc()))
+            Err(Exception::attribute_error(name));
+        }
     }
 
     fn get_type(&self) -> Object {
@@ -161,7 +151,9 @@ impl TupleObject {
     }
 
     pub fn new2(arg0: Object, arg1: Object) -> TupleObject {
-        TupleObject { data: vec![arg0, arg1] }
+        TupleObject {
+            data: vec![arg0, arg1],
+        }
     }
 }
 

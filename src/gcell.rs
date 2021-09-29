@@ -1,6 +1,6 @@
-use std::cell::{UnsafeCell};
+use shredder::marker::{GcDrop, GcSafe};
 use shredder::{Scan, Scanner};
-use shredder::marker::{GcSafe, GcDrop};
+use std::cell::UnsafeCell;
 use std::ops::CoerceUnsized;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -21,7 +21,7 @@ impl GCellOwner {
     }
 }
 
-impl <T> GCell<T> {
+impl<T> GCell<T> {
     pub fn new(value: T) -> Self {
         GCell(UnsafeCell::new(value))
     }
@@ -29,9 +29,7 @@ impl <T> GCell<T> {
 
 impl<T: ?Sized> GCell<T> {
     pub fn ro(&self, _lock: &GCellOwner) -> &T {
-        unsafe {
-            &*self.0.get()
-        }
+        unsafe { &*self.0.get() }
     }
     pub fn rw(&self, _lock: &mut GCellOwner) -> &mut T {
         unsafe { &mut *self.0.get() }
@@ -41,14 +39,15 @@ impl<T: ?Sized> GCell<T> {
 unsafe impl<T: ?Sized> GcSafe for GCell<T> where T: GcSafe {}
 unsafe impl<T: ?Sized> GcDrop for GCell<T> where T: GcDrop {}
 
-unsafe impl <T: ?Sized> Scan for GCell<T> where T: Scan {
+unsafe impl<T: ?Sized> Scan for GCell<T>
+where
+    T: Scan,
+{
     fn scan(&self, scanner: &mut Scanner<'_>) {
-        unsafe {
-            (*self.0.get()).scan(scanner)
-        }
+        unsafe { (*self.0.get()).scan(scanner) }
     }
 }
 
-unsafe impl <T: ?Sized + Send + Sync> Sync for GCell<T> {}
+unsafe impl<T: ?Sized + Send + Sync> Sync for GCell<T> {}
 
-impl <T, U> CoerceUnsized<GCell<U>> for GCell<T> where T: CoerceUnsized<U> {}
+impl<T, U> CoerceUnsized<GCell<U>> for GCell<T> where T: CoerceUnsized<U> {}
