@@ -14,7 +14,7 @@ pub type GenericResult<T> = Result<T, Exception>;
 pub type NullResult = GenericResult<()>;
 pub type ObjectResult = GenericResult<Object>;
 pub type VecResult = GenericResult<Vec<Object>>;
-pub type ObjectSelfFunction = fn(&mut GCellOwner, Object, TupleObject) -> ObjectResult;
+pub type ObjectSelfFunction = fn(&mut MutexGuard<GCellOwner>, Object, TupleObject) -> ObjectResult;
 
 #[derive(PartialEq, Eq, Debug)]
 pub enum ExceptionKind {
@@ -182,9 +182,18 @@ pub struct BasicObject {
     pub type_: Object,
 }
 
-fn yield_gil(guard: &mut MutexGuard<GCellOwner>) {
+#[derive(Scan)]
+pub struct NoneObject{}
+impl ObjectTrait for NoneObject {
+    fn get_type(&self) -> Object {
+        G_NONETYPE.clone()
+    }
+}
+
+pub fn yield_gil<F>(guard: &mut MutexGuard<GCellOwner>, func: F) where F: FnOnce() {
     take_mut::take(guard, |guard| {
         drop(guard);
+        func();
         GIL.lock()
     })
 }
@@ -227,4 +236,11 @@ lazy_static! {
         members: HashMap::new(),
         constructor: &(builtins::int_constructor as ObjectSelfFunction),
     }));
+    pub static ref G_NONETYPE: Object = Gc::new(GCell::new(TypeObject {
+        name: "nonetype".to_string(),
+        base_class: OBJECT_TYPE.clone(),
+        members: HashMap::new(),
+        constructor: &(builtins::nonetype_constructor as ObjectSelfFunction),
+    }));
+    pub static ref G_NONE: Object = Gc::new(GCell::new(NoneObject {}));
 }
