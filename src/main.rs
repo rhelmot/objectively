@@ -1,5 +1,5 @@
 #![feature(coerce_unsized)]
-#![feature(try_trait_v2)]
+#![feature(ptr_metadata)]
 
 mod builtins;
 mod gcell;

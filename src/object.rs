@@ -71,7 +71,7 @@ pub trait ObjectTrait: GcDrop + Scan + ToScan + Send + Sync {
         Err(Exception::attribute_error(name))
     }
 
-    fn call(&mut self, _args: TupleObject) -> ObjectResult {
+    fn call(&mut self, gil: &mut MutexGuard<GCellOwner>, _args: TupleObject) -> ObjectResult {
         Err(Exception::type_error("Cannot call"))
     }
 
@@ -81,6 +81,9 @@ pub trait ObjectTrait: GcDrop + Scan + ToScan + Send + Sync {
         None
     }
     fn as_int(&self) -> Option<&IntObject> {
+        None
+    }
+    fn as_bool(&self) -> Option<&BoolObject> {
         None
     }
 
@@ -190,6 +193,25 @@ impl ObjectTrait for NoneObject {
     }
 }
 
+#[derive(Scan)]
+pub struct BoolObject{
+    pub data: bool,
+}
+impl ObjectTrait for BoolObject {
+    fn get_type(&self) -> Object {
+        G_BOOL.clone()
+    }
+
+    fn as_bool(&self) -> Option<&BoolObject> {
+        Some(self)
+    }
+}
+impl BoolObject {
+    pub fn from_bool(data: bool) -> Object {
+        if data { G_TRUE.clone() } else { G_FALSE.clone() }
+    }
+}
+
 pub fn yield_gil<F>(guard: &mut MutexGuard<GCellOwner>, func: F) where F: FnOnce() {
     take_mut::take(guard, |guard| {
         drop(guard);
@@ -242,5 +264,13 @@ lazy_static! {
         members: HashMap::new(),
         constructor: &(builtins::nonetype_constructor as ObjectSelfFunction),
     }));
+    pub static ref G_BOOL: Object = Gc::new(GCell::new(TypeObject {
+        name: "bool".to_string(),
+        base_class: OBJECT_TYPE.clone(),
+        members: HashMap::new(),
+        constructor: &(builtins::bool_constructor as ObjectSelfFunction),
+    }));
     pub static ref G_NONE: Object = Gc::new(GCell::new(NoneObject {}));
+    pub static ref G_TRUE: Object = Gc::new(GCell::new(BoolObject { data: true }));
+    pub static ref G_FALSE: Object = Gc::new(GCell::new(BoolObject { data: false }));
 }
