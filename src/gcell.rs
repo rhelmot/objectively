@@ -1,7 +1,7 @@
 use shredder::marker::{GcDrop, GcSafe};
 use shredder::{Scan, Scanner};
 use std::cell::UnsafeCell;
-use std::ops::CoerceUnsized;
+use std::ops::{CoerceUnsized, Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 pub struct GCell<T: ?Sized>(UnsafeCell<T>);
@@ -27,12 +27,46 @@ impl<T> GCell<T> {
     }
 }
 
+pub struct Ref<'a, R: Deref<Target = GCell<T>>, T: ?Sized>(pub R, pub &'a GCellOwner);
+pub struct RefMut<'a, R: Deref<Target = GCell<T>>, T: ?Sized>(pub R, pub &'a mut GCellOwner);
+
 impl<T: ?Sized> GCell<T> {
-    pub fn ro(&self, _lock: &GCellOwner) -> &T {
+    pub fn ro<'a>(&'a self, _lock: &'a GCellOwner) -> &'a T {
         unsafe { &*self.0.get() }
     }
-    pub fn rw(&self, _lock: &mut GCellOwner) -> &mut T {
+    pub fn rw<'a>(&'a self, _lock: &'a mut GCellOwner) -> &'_ mut T {
         unsafe { &mut *self.0.get() }
+    }
+}
+
+impl<'a, R, T: ?Sized> Deref for Ref<'_, R, T>
+where
+    R: Deref<Target = GCell<T>>,
+{
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.ro(self.1)
+    }
+}
+
+impl<'a, R, T: ?Sized> Deref for RefMut<'_, R, T>
+where
+    R: Deref<Target = GCell<T>>,
+{
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.ro(self.1)
+    }
+}
+
+impl<'a, R, T: ?Sized> DerefMut for RefMut<'_, R, T>
+where
+    R: Deref<Target = GCell<T>>,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.rw(self.1)
     }
 }
 

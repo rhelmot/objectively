@@ -1,13 +1,16 @@
-use crate::builtins;
 use crate::gcell::{GCell, GCellOwner};
+use crate::{builtins, gcell};
+use core::ops::DerefMut;
 use lazy_static::lazy_static;
 use shredder::marker::GcDrop;
-use shredder::{Gc, Scan, ToScan};
+use shredder::{Gc, GcGuard, Scan, ToScan};
 use std::collections::HashMap;
-use std::convert::{TryInto};
+use std::convert::TryInto;
 use std::vec::Vec;
 
 use parking_lot::{Mutex, MutexGuard};
+use std::marker::Unsize;
+use std::ops::Deref;
 
 pub type Object = Gc<GCell<dyn ObjectTrait>>;
 pub type GenericResult<T> = Result<T, Exception>;
@@ -71,8 +74,10 @@ pub trait ObjectTrait: GcDrop + Scan + ToScan + Send + Sync {
         Err(Exception::attribute_error(name))
     }
 
-    fn call(&mut self, gil: &mut MutexGuard<GCellOwner>, _args: TupleObject) -> ObjectResult {
-        Err(Exception::type_error("Cannot call"))
+    fn call_fn(
+        &self,
+    ) -> fn(&GCell<dyn ObjectTrait>, &mut MutexGuard<GCellOwner>, TupleObject) -> ObjectResult {
+        |_, _, _| Err(Exception::type_error("Cannot call"))
     }
 
     fn get_type(&self) -> Object;
@@ -89,10 +94,97 @@ pub trait ObjectTrait: GcDrop + Scan + ToScan + Send + Sync {
 
     fn into_gc(self) -> Object
     where
-        Self: Sized,
-        Self: 'static,
+        Self: Sized + 'static,
     {
         Gc::new(GCell::new(self))
+    }
+}
+
+pub(crate) trait GcGCellExt {
+    type InnerType: ObjectTrait + ?Sized;
+    type GetRef<'a>: Deref<Target = GCell<Self::InnerType>> + 'a;
+    fn get(&self) -> Self::GetRef<'_>;
+
+    type ReadRef<'a>: Deref<Target = Self::InnerType> + 'a;
+    fn ro<'a>(&'a self, gil: &'a GCellOwner) -> Self::ReadRef<'a>;
+
+    type WriteRef<'a>: DerefMut<Target = Self::InnerType> + 'a;
+    fn rw<'a>(&'a self, gil: &'a mut GCellOwner) -> Self::WriteRef<'a>;
+
+    fn get_attr(&self, gil: &GCellOwner, name: &str) -> ObjectResult {
+        self.ro(gil).get_attr(name)
+    }
+
+    //noinspection RsSelfConvention
+    fn set_attr(&self, gil: &mut GCellOwner, name: &str, value: Object) -> NullResult {
+        self.rw(gil).set_attr(name, value)
+    }
+
+    fn del_attr(&self, gil: &mut GCellOwner, name: &str) -> NullResult {
+        self.rw(gil).del_attr(name)
+    }
+
+    fn call_fn(
+        &self,
+        gil: &GCellOwner,
+    ) -> fn(&GCell<dyn ObjectTrait>, &mut MutexGuard<GCellOwner>, TupleObject) -> ObjectResult {
+        self.ro(gil).call_fn()
+    }
+
+    fn call(&self, gil: &mut MutexGuard<GCellOwner>, args: TupleObject) -> ObjectResult
+    where
+        Self::InnerType: Unsize<dyn ObjectTrait>,
+    {
+        let self_ = self.get();
+        let f = self_.ro(gil).call_fn();
+        f(self_.deref(), gil, args)
+    }
+
+    fn get_type(&self, gil: &GCellOwner) -> Object {
+        self.ro(gil).get_type()
+    }
+}
+
+impl<T> GcGCellExt for Gc<GCell<T>>
+where
+    T: ObjectTrait + ?Sized + 'static,
+{
+    type InnerType = T;
+    type GetRef<'a> = GcGuard<'a, GCell<T>>;
+    fn get(&self) -> Self::GetRef<'_> {
+        // Calls inherent method on `Gc`, not the method we're currently in
+        self.get()
+    }
+
+    type ReadRef<'a> = gcell::Ref<'a, Self::GetRef<'a>, T>;
+    fn ro<'a>(&'a self, gil: &'a GCellOwner) -> Self::ReadRef<'a> {
+        gcell::Ref(self.get(), gil)
+    }
+
+    type WriteRef<'a> = gcell::RefMut<'a, Self::GetRef<'a>, T>;
+    fn rw<'a>(&'a self, gil: &'a mut GCellOwner) -> Self::WriteRef<'a> {
+        gcell::RefMut(self.get(), gil)
+    }
+}
+
+impl<T> GcGCellExt for GCell<T>
+where
+    T: ObjectTrait + ?Sized + 'static,
+{
+    type InnerType = T;
+    type GetRef<'a> = &'a Self;
+    fn get(&self) -> Self::GetRef<'_> {
+        self
+    }
+
+    type ReadRef<'a> = gcell::Ref<'a, Self::GetRef<'a>, T>;
+    fn ro<'a>(&'a self, gil: &'a GCellOwner) -> Self::ReadRef<'a> {
+        gcell::Ref(self.get(), gil)
+    }
+
+    type WriteRef<'a> = gcell::RefMut<'a, Self::GetRef<'a>, T>;
+    fn rw<'a>(&'a self, gil: &'a mut GCellOwner) -> Self::WriteRef<'a> {
+        gcell::RefMut(self.get(), gil)
     }
 }
 
@@ -121,12 +213,10 @@ impl ObjectTrait for TupleObject {
                 Ok(v) => {
                     let int = IntObject::new(v);
                     Ok(int.into_gc())
-                },
-                Err(_) => {
-                    Err(Exception::overflow_error(
-                        "could not fit tuple length into integer object",
-                    ))
                 }
+                Err(_) => Err(Exception::overflow_error(
+                    "could not fit tuple length into integer object",
+                )),
             }
         } else {
             Err(Exception::attribute_error(name))
@@ -186,7 +276,7 @@ pub struct BasicObject {
 }
 
 #[derive(Scan)]
-pub struct NoneObject{}
+pub struct NoneObject {}
 impl ObjectTrait for NoneObject {
     fn get_type(&self) -> Object {
         G_NONETYPE.clone()
@@ -194,7 +284,7 @@ impl ObjectTrait for NoneObject {
 }
 
 #[derive(Scan)]
-pub struct BoolObject{
+pub struct BoolObject {
     pub data: bool,
 }
 impl ObjectTrait for BoolObject {
@@ -208,16 +298,24 @@ impl ObjectTrait for BoolObject {
 }
 impl BoolObject {
     pub fn from_bool(data: bool) -> Object {
-        if data { G_TRUE.clone() } else { G_FALSE.clone() }
+        if data {
+            G_TRUE.clone()
+        } else {
+            G_FALSE.clone()
+        }
     }
 }
 
-pub fn yield_gil<F>(guard: &mut MutexGuard<GCellOwner>, func: F) where F: FnOnce() {
+// If `F` panics, the process will be aborted instead of unwinding
+pub fn yield_gil<F>(guard: &mut MutexGuard<GCellOwner>, func: F)
+where
+    F: FnOnce(),
+{
     take_mut::take(guard, |guard| {
         drop(guard);
         func();
         GIL.lock()
-    })
+    });
 }
 
 lazy_static! {
@@ -237,7 +335,7 @@ lazy_static! {
             members: HashMap::new(),
             constructor: &(builtins::object_constructor as ObjectSelfFunction),
         }));
-        ty.get().rw(&mut GIL.lock()).base_class = ty.clone();
+        ty.rw(&mut GIL.lock()).base_class = ty.clone();
         ty
     };
     pub static ref G_TYPE: Object = Gc::new(GCell::new(TypeObject {
