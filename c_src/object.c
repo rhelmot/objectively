@@ -4,6 +4,8 @@
 
 #include "object.h"
 #include "gc.h"
+#include "errors.h"
+#include "interpreter.h"
 
 // tables and instances
 ObjectTable null_table = {
@@ -118,23 +120,20 @@ ObjectTable slice_table = {
 	.del_attr = null_del_attr,
 	.call = null_call,
 };
+ObjectTable exc_table = {
+	.trace = exc_trace,
+	.finalize = null_finalize,
+	.get_attr = exc_get_attr,
+	.set_attr = null_set_attr,
+	.del_attr = null_del_attr,
+	.call = null_call,
+};
 
 // builtin type class instances
 
-#define BUILTIN_TYPE(name, base, cons_func) \
-Object *(cons_func)(Object *self, TupleObject *args); \
-TypeObject g_##name = { \
-	.header_basic.header_dict.header = { \
-		.table = &type_table, \
-		.type = &g_type, \
-	}, \
-	.base_class = &g_##base, \
-	.constructor = (cons_func), \
-}; \
-STATIC_OBJECT(g_##name);
-
 
 Object *object_constructor(Object *self, TupleObject *args);
+INTERNED_STRING(g_object_name, "object");
 TypeObject g_object = {
 	.header_basic.header_dict.header = {
 		.table = &type_table,
@@ -142,15 +141,16 @@ TypeObject g_object = {
 	},
 	.base_class = NULL,
 	.constructor = object_constructor,
+	.name = (BytesObject*)&g_object_name,
 };
 STATIC_OBJECT(g_object);
-
+ADD_MEMBER(builtins, "object", g_object);
 
 BUILTIN_TYPE(type, object, type_constructor);
 BUILTIN_TYPE(nonetype, object, nonetype_constructor);
 BUILTIN_TYPE(int, object, int_constructor);
 BUILTIN_TYPE(float, object, float_constructor);
-BUILTIN_TYPE(bool, int, bool_constructor);
+BUILTIN_TYPE(bool, object, bool_constructor);
 BUILTIN_TYPE(bytes, object, bytes_constructor);
 BUILTIN_TYPE(dict, object, dict_constructor);
 BUILTIN_TYPE(list, object, list_constructor);
@@ -159,6 +159,7 @@ BUILTIN_TYPE(builtin, object, builtin_constructor);
 BUILTIN_TYPE(closure, object, closure_constructor);
 BUILTIN_TYPE(boundmeth, object, boundmeth_constructor);
 BUILTIN_TYPE(slice, object, slice_constructor);
+BUILTIN_TYPE(exception, object, exc_constructor);
 
 EmptyObject g_none = {
 	.header = (ObjectHeader) {
@@ -181,6 +182,14 @@ EmptyObject g_false = {
 	},
 };
 STATIC_OBJECT(g_false);
+TupleObject empty_tuple = {
+	.header = (ObjectHeader) {
+		.type = &g_tuple,
+		.table = &tuple_table,
+	},
+	.len = 0,
+};
+STATIC_OBJECT(empty_tuple);
 
 bool null_trace(Object *self, bool (*tracer)(Object *tracee)) {
 	return true;
@@ -189,26 +198,26 @@ void null_finalize(Object *self) {
 	return;
 }
 Object *null_get_attr(Object *self, Object *name) {
-	// TODO set attributeerror
+	error = exc_arg(&g_AttributeError, name);
 	return NULL;
 }
 bool null_set_attr(Object *self, Object *name, Object *value) {
-	// TODO set attributeerror
+	error = exc_arg(&g_AttributeError, name);
 	return NULL;
 }
 bool null_del_attr(Object *self, Object *name) {
-	// TODO set attributeerror
+	error = exc_arg(&g_AttributeError, name);
 	return NULL;
 }
 Object *null_call(Object *self, TupleObject *args) {
-	// TODO set typeerror
+	error = exc_msg(&g_TypeError, "Cannot call");
 	return NULL;
 }
 
 IntObject *int_raw(int64_t value) {
 	IntObject *result = (IntObject *)gc_malloc(sizeof(IntObject));
 	if (!result) {
-		// TODO set memoryerror
+		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
 	result->header = (ObjectHeader) {
@@ -226,7 +235,7 @@ EmptyObject *bool_raw(bool value) {
 FloatObject *float_raw(double value) {
 	FloatObject *result = (FloatObject*)gc_malloc(sizeof(IntObject));
 	if (!result) {
-		// TODO set memoryerror
+		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
 	result->header = (ObjectHeader) {
@@ -240,7 +249,7 @@ FloatObject *float_raw(double value) {
 ListObject *list_raw(Object **data, size_t len) {
 	ListObject *result = (ListObject*)gc_malloc(sizeof(ListObject));
 	if (!result) {
-		// TODO set memoryerror
+		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
 	result->header = (ObjectHeader) {
@@ -251,7 +260,7 @@ ListObject *list_raw(Object **data, size_t len) {
 	result->cap = len;
 	result->data = malloc(sizeof(Object*) * len);
 	if (!result->data) {
-		// TODO set memoryerror
+		error = (Object*)&MemoryError_inst;
 		free(result);
 		return NULL;
 	}
@@ -260,9 +269,12 @@ ListObject *list_raw(Object **data, size_t len) {
 }
 
 TupleObject *tuple_raw(Object **data, size_t len) {
+	if (len == 0) {
+		return &empty_tuple;
+	}
 	TupleObject *result = (TupleObject*)gc_malloc(sizeof(TupleObject) + sizeof(Object*) * len);
 	if (!result) {
-		// TODO set memoryerror
+		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
 	result->header = (ObjectHeader) {
@@ -277,7 +289,7 @@ TupleObject *tuple_raw(Object **data, size_t len) {
 BytesObject *bytes_raw(const char *data, size_t len) {
 	BytesObject *result = (BytesObject*)gc_malloc(sizeof(BytesObject) + len * sizeof(char));
 	if (!result) {
-		// TODO set memoryerror
+		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
 	result->header = (ObjectHeader) {
@@ -289,10 +301,10 @@ BytesObject *bytes_raw(const char *data, size_t len) {
 	return result;
 }
 
-BytesUnownedObject *bytes_unowned_raw(char *data, size_t len, Object *owner) {
+BytesUnownedObject *bytes_unowned_raw(const char *data, size_t len, Object *owner) {
 	BytesUnownedObject *result = (BytesUnownedObject*)gc_malloc(sizeof(BytesUnownedObject));
 	if (!result) {
-		// TODO set memoryerror
+		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
 
@@ -309,7 +321,7 @@ BytesUnownedObject *bytes_unowned_raw(char *data, size_t len, Object *owner) {
 DictObject *dicto_raw() {
 	DictObject *result = (DictObject *)gc_malloc(sizeof(DictObject));
 	if (!result) {
-		// TODO set memoryerror
+		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
 	result->header = (ObjectHeader) {
@@ -322,7 +334,7 @@ DictObject *dicto_raw() {
 BasicObject *object_raw(TypeObject *type) {
 	BasicObject *result = (BasicObject*)gc_malloc(sizeof(BasicObject));
 	if (!result) {
-		// TODO set memoryerror
+		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
 	result->header_dict.header = (ObjectHeader) {
@@ -335,7 +347,7 @@ BasicObject *object_raw(TypeObject *type) {
 ClosureObject *closure_raw(BytesObject *name, BytesObject *bytecode, DictObject *context) {
 	ClosureObject *result = (ClosureObject*)gc_malloc(sizeof(ClosureObject));
 	if (!result) {
-		// TODO set memoryerror
+		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
 	result->header = (ObjectHeader) {
@@ -351,7 +363,7 @@ ClosureObject *closure_raw(BytesObject *name, BytesObject *bytecode, DictObject 
 BoundMethodObject *boundmeth_raw(Object *meth, Object *self) {
 	BoundMethodObject *result = (BoundMethodObject*)gc_malloc(sizeof(BoundMethodObject));
 	if (!result) {
-		// TODO set memoryerror
+		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
 	result->header = (ObjectHeader) {
@@ -366,7 +378,7 @@ BoundMethodObject *boundmeth_raw(Object *meth, Object *self) {
 SliceObject *slice_raw(Object *start, Object *end) {
 	SliceObject *result = (SliceObject*)gc_malloc(sizeof(SliceObject));
 	if (!result) {
-		// TODO set memoryerror
+		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
 	result->header = (ObjectHeader) {
@@ -378,18 +390,43 @@ SliceObject *slice_raw(Object *start, Object *end) {
 	return result;
 }
 
+ExceptionObject *exc_raw(TypeObject *type, TupleObject *args) {
+	ExceptionObject *result = (ExceptionObject*)gc_malloc(sizeof(ExceptionObject));
+	if (!result) {
+		error = (Object*)&MemoryError_inst;
+		return NULL;
+	}
+	result->header = (ObjectHeader) {
+		.type = type,
+		.table = &exc_table,
+	};
+	result->args = args;
+	return result;
+}
+
 // MAKE SURE YOU FREE THE RESULT OF THIS! IT IS NOT GARBAGE COLLECTED!
 char *c_str(Object *arg) {
 	if (arg->type != &g_bytes) {
-		// TODO set typeerror
+		error = exc_msg(&g_TypeError, "Cannot use object as string");
 		return NULL;
 	}
 	BytesObject *str = (BytesObject*)arg;
 	if (memchr(bytes_data(str), '\0', str->len) != NULL) {
-		// TODO set valueerror
+		error = exc_msg(&g_ValueError, "Embedded null byte");
 		return NULL;
 	}
 	return strndup(bytes_data(str), str->len);
+}
+
+bool object_equals_str(Object *obj, char *str) {
+	char *maybe_str = c_str(obj);
+	if (maybe_str == NULL) {
+		error = NULL;
+		return false;
+	}
+	bool result = strcmp(maybe_str, str) == 0;
+	free(maybe_str);
+	return result;
 }
 
 IntObject *bytes2int(BytesObject *arg, int64_t base) {
@@ -398,11 +435,11 @@ IntObject *bytes2int(BytesObject *arg, int64_t base) {
 		return NULL;
 	}
 	char *endptr;
-	int64_t value = strtoll(buffer, &endptr, 10);
+	int64_t value = strtoll(buffer, &endptr, base);
 	bool valid = buffer[0] != 0 && endptr[0] == 0;
 	free(buffer);
 	if (!valid) {
-		// TODO set valueerror
+		error = exc_msg(&g_ValueError, "invalid string for integer conversion");
 		return NULL;
 	}
 	return int_raw(value);
@@ -418,7 +455,7 @@ FloatObject *bytes2float(BytesObject *arg) {
 	bool valid = buffer[0] != 0 && endptr[0] == 0;
 	free(buffer);
 	if (!valid) {
-		// TODO set valueerror
+		error = exc_msg(&g_ValueError, "invalid string for float conversion");
 		return NULL;
 	}
 	return float_raw(value);
@@ -436,7 +473,7 @@ Object* int_constructor(Object *self, TupleObject *args) {
 		} else if (arg->type == &g_bytes) {
 			return (Object*)bytes2int((BytesObject*)arg, 10);
 		} else {
-			// TODO set typeerror
+			error = exc_msg(&g_TypeError, "Expected int, float, or bytes");
 			return NULL;
 		}
 	} else if (args->len == 2) {
@@ -445,10 +482,11 @@ Object* int_constructor(Object *self, TupleObject *args) {
 		if (arg0->type == &g_bytes && arg1->type == &g_int) {
 			return (Object*)bytes2int((BytesObject*)arg0, ((IntObject*)arg1)->value);
 		} else {
-			// TODO set typeerror
+			error = exc_msg(&g_TypeError, "Expected bytes and int");
+			return NULL;
 		}
 	} else {
-		// TODO set typeerror
+		error = exc_msg(&g_TypeError, "Expected 0 or 1 or 2 arguments");
 		return NULL;
 	}
 }
@@ -465,11 +503,11 @@ Object *float_constructor(Object *self, TupleObject *args) {
 		} else if (arg->type == &g_bytes) {
 			return (Object*)bytes2float((BytesObject*)arg);
 		} else {
-			// TODO set typeerror
+			error = exc_msg(&g_TypeError, "Expected float or int or bytes");
 			return NULL;
 		}
 	} else {
-		// TODO set typeerror
+		error = exc_msg(&g_TypeError, "Expected 0 or 1 arguments");
 		return NULL;
 	}
 }
@@ -485,12 +523,15 @@ Object *object_constructor(Object *_self, TupleObject *args) {
 	if (result == NULL) {
 		return NULL;
 	}
+	gc_root((Object*)result);
 	Object *init = get_attr_inner((Object*)result, "__init__");
 	if (init) {
 		if (!call(init, args)) {
+			gc_unroot((Object*)result);
 			return NULL;
 		}
 	}
+	gc_unroot((Object*)result);
 	return (Object*)result;
 }
 
@@ -537,7 +578,7 @@ Object *object_get_attr(Object *_self, Object *name) {
 		return NULL;
 	}
 	if (!result.found) {
-		// TODO set attributeerror
+		error = exc_arg(&g_AttributeError, name);
 		return NULL;
 	}
 	return (Object*)result.val;
@@ -555,7 +596,7 @@ bool object_del_attr(Object *_self, Object *name) {
 		return false;
 	}
 	if (!result.found) {
-		// TODO set attributeerror
+		error = exc_arg(&g_AttributeError, name);
 		return false;
 	}
 	return true;
@@ -586,11 +627,11 @@ void dicto_finalize(Object *_self) {
 
 Object *dicto_get_attr(Object *_self, Object *name) {
 	DictObject *self = (DictObject*)_self;
-	if (object_equals(name, (Object*)bytes_raw("len", 3)).equals) {
+	if (object_equals_str(name, "len")) {
 		return (Object*)int_raw(self->core.len);
 	}
 
-	// TODO set attributeerror
+	error = exc_arg(&g_AttributeError, name);
 	return NULL;
 }
 
@@ -604,11 +645,11 @@ Object *tuple_constructor(Object *self, TupleObject *args) {
 		} else if (arg->type == &g_list) {
 			return (Object*)tuple_raw(((ListObject*)arg)->data, ((ListObject*)arg)->len);
 		} else {
-			// TODO set typeerror
+			error = exc_msg(&g_TypeError, "Expected tuple or list");
 			return NULL;
 		}
 	} else {
-		// TODO set typeerror
+		error = exc_msg(&g_TypeError, "Expected 0 or 1 args");
 		return NULL;
 	}
 }
@@ -625,11 +666,11 @@ bool tuple_trace(Object *_self, bool (*tracer)(Object *tracee)) {
 
 Object *tuple_get_attr(Object *_self, Object *name) {
 	TupleObject *self = (TupleObject*)_self;
-	if (object_equals(name, (Object*)bytes_raw("len", 3)).equals) {
+	if (object_equals_str(name, "len")) {
 		return (Object*)int_raw(self->len);
 	}
 
-	// TODO set attributeerror
+	error = exc_arg(&g_AttributeError, name);
 	return NULL;
 }
 
@@ -643,11 +684,11 @@ Object *list_constructor(Object *self, TupleObject *args) {
 		} else if (arg->type == &g_list) {
 			return (Object*)list_raw(((ListObject*)arg)->data, ((ListObject*)arg)->len);
 		} else {
-			// TODO set typeerror
+			error = exc_msg(&g_TypeError, "Expected tuple or list");
 			return NULL;
 		}
 	} else {
-		// TODO set typeerror
+		error = exc_msg(&g_TypeError, "Expected 0 or 1 args");
 		return NULL;
 	}
 }
@@ -672,11 +713,11 @@ void list_finalize(Object *_self) {
 
 Object *list_get_attr(Object *_self, Object *name) {
 	ListObject *self = (ListObject*)_self;
-	if (object_equals(name, (Object*)bytes_raw("len", 3)).equals) {
+	if (object_equals_str(name, "len")) {
 		return (Object*)int_raw(self->len);
 	}
 
-	// TODO set attributeerror
+	error = exc_arg(&g_AttributeError, name);
 	return NULL;
 }
 
@@ -692,20 +733,20 @@ Object *type_constructor(Object *_self, TupleObject *args) {
 		// OH BOY
 		// first arg (name) must be a string
 		// second arg (base) must be a TypeObject
-		// this arg (dict) must be a dict
+		// third arg (dict) must be a dict
 		Object *_arg0 = args->data[0];
 		if (_arg0->type != &g_bytes) {
-			// TODO set typeerror
+			error = exc_msg(&g_TypeError, "Argument 1: expected bytes");
 			return NULL;
 		}
 		Object *_arg1 = args->data[1];
 		if (_arg1->type != &g_type) {
-			// TODO set typeerror
+			error = exc_msg(&g_TypeError, "Argument 2: expected type");
 			return NULL;
 		}
 		Object *_arg2 = args->data[2];
 		if (_arg1->type != &g_dict) {
-			// TODO set typeerror
+			error = exc_msg(&g_TypeError, "Argument 3: expected dict");
 			return NULL;
 		}
 		DictObject *arg2 = (DictObject*)_arg2;
@@ -715,27 +756,39 @@ Object *type_constructor(Object *_self, TupleObject *args) {
 			.type = &g_type,
 		};
 		result->base_class = (TypeObject*)_arg1,
-		result->constructor = object_constructor, // ...I think this is right?
-		result->name = _arg0;
+		result->constructor = result->base_class->constructor;
+		result->name = (BytesObject*)_arg0;
 		bool inner_tracer(void *key, void **val) {
-			dict_set(&result->header_basic.header_dict.core, key, *val, object_hasher, object_equals);
+			return dict_set(&result->header_basic.header_dict.core, key, *val, object_hasher, object_equals);
 		}
 		dict_trace(&arg2->core, inner_tracer);
 		return (Object*)result;
 	} else {
-		// TODO set typeerror
+		error = exc_msg(&g_TypeError, "Expected 1 or 3 arguments");
 		return NULL;
 	}
 }
 
 bool type_trace(Object *_self, bool (*tracer)(Object *tracee)) {
 	TypeObject *self = (TypeObject*)_self;
-	if (!tracer((Object*)self->base_class)) return false;
-	if (!tracer(self->name)) return false;
+	if (!object_trace((Object*)&self->header_basic, tracer)) return false;
+	if (self->base_class) {
+		if (!tracer((Object*)self->base_class)) return false;
+	}
+	if (!tracer((Object*)self->name)) return false;
 	return true;
 }
 
 Object *type_get_attr(Object *self, Object *name) {
+	// some hacks :)
+	if (self == (Object*)&g_bytes && name->type == &g_bytes) {
+		if (strncmp(bytes_data((BytesObject*)name), "__hash__", strlen("__hash__")) == 0) {
+			return (Object*)&g_bytes___hash__;
+		}
+		if (strncmp(bytes_data((BytesObject*)name), "__eq__", strlen("__eq__")) == 0) {
+			return (Object*)&g_bytes___eq__;
+		}
+	}
 	return object_get_attr(self, name);
 }
 
@@ -746,19 +799,19 @@ Object *type_call(Object *_self, TupleObject *args) {
 
 Object *closure_constructor(Object *self, TupleObject *args) {
 	if (args->len != 3) {
-		// TODO set typeerror
+		error = exc_msg(&g_TypeError, "Expected 3 arguments");
 		return NULL;
 	}
 	if (args->data[0]->type != &g_bytes) {
-		// TODO set typeerror
+		error = exc_msg(&g_TypeError, "Argument 1: expected bytes");
 		return NULL;
 	}
 	if (args->data[1]->type != &g_bytes) {
-		// TODO set typeerror
+		error = exc_msg(&g_TypeError, "Argument 2: expected bytes");
 		return NULL;
 	}
 	if (args->data[2]->type != &g_dict) {
-		// TODO set typeerror
+		error = exc_msg(&g_TypeError, "Argument 3: expected dict");
 		return NULL;
 	}
 
@@ -775,40 +828,62 @@ bool closure_trace(Object *_self, bool (*tracer)(Object *tracee)) {
 
 Object *closure_get_attr(Object *_self, Object *name) {
 	ClosureObject *self = (ClosureObject*)_self;
-	if (object_equals(name, (Object*)bytes_raw("name", 4)).equals) {
+	if (object_equals_str(name, "name")) {
 		return (Object*)self->name;
 	}
-	if (object_equals(name, (Object*)bytes_raw("code", 4)).equals) {
+	if (object_equals_str(name, "code")) {
 		return (Object*)self->bytecode;
 	}
 
-	// TODO set attributeerror
+	error = exc_arg(&g_AttributeError, name);
 	return NULL;
 }
 
-Object *closure_call(Object *self, TupleObject *args) {
-	// TODO uhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhhh
+Object *closure_call(Object *_self, TupleObject *args) {
+	if (_self->type != &g_closure) {
+		error = exc_msg(&g_TypeError, "how did you do that");
+		return NULL;
+	}
+	ClosureObject *self = (ClosureObject*)_self;
+	return interpreter(self, args);
 }
 
 Object *bytes_constructor(Object *self, TupleObject *args) {
+	if (args->len == 0) {
+		return (Object*)bytes_raw("", 0);
+	}
 	if (args->len != 1) {
-		// TODO set typeerror
+		error = exc_msg(&g_TypeError, "Expected 0 or 1 arguments");
 		return NULL;
 	}
-	Object *method = get_attr_inner(self, "__str__");
+	Object *method = get_attr_inner(args->data[0], "__str__");
 	if (method == NULL) {
 		return NULL;
 	}
-	Object *result = call(method, tuple_raw(NULL, 0));
+	TupleObject *new_args = tuple_raw(NULL, 0);
+	gc_root((Object*)new_args);
+	Object *result = call(method, new_args);
+	gc_unroot((Object*)new_args);
 	// if we're strapped for bugs we can remove this check
 	if (result->type != &g_bytes) {
-		// TODO set typeerror
+		error = exc_msg(&g_TypeError, "__str__ did not return a bytestring");
 		return NULL;
 	}
 	return result;
 }
 
-char *bytes_data(BytesObject *self) {
+BytesObject *bytes_constructor_inner(Object *arg) {
+	TupleObject *args = tuple_raw(&arg, 1);
+	if (args == NULL) {
+		return NULL;
+	}
+	gc_root((Object*)args);
+	Object *result = bytes_constructor(NULL, args);
+	gc_unroot((Object*)args);
+	return (BytesObject*)result;
+}
+
+const char *bytes_data(BytesObject *self) {
 	if (self->header.table == &bytes_unowned_table) {
 		return ((BytesUnownedObject*)self)->_data;
 	} else {
@@ -818,60 +893,86 @@ char *bytes_data(BytesObject *self) {
 
 Object *bytes_get_attr(Object *_self, Object *name) {
 	BytesObject *self = (BytesObject*)_self;
-	if (object_equals(name, (Object*)bytes_raw("len", 3)).equals) {
+	if (object_equals_str(name, "len")) {
 		return (Object*)int_raw(self->len);
 	}
 
-	// TODO set attributeerror
+	error = exc_arg(&g_AttributeError, name);
 	return NULL;
 }
 
-Object *bytes_slice(Object *_self, size_t start, size_t count) {
-
-}
-
 Object *bool_constructor(Object *self, TupleObject *args) {
+	if (args->len == 0) {
+		return (Object*)&g_false;
+	}
 	if (args->len != 1) {
-		// TODO set typeerror
+		error = exc_msg(&g_TypeError, "Expected 0 or 1 arguments");
 		return NULL;
 	}
 	Object *method = get_attr_inner(self, "__bool__");
 	if (method == NULL) {
 		return NULL;
 	}
-	Object *result = call(method, tuple_raw(NULL, 0));
+	TupleObject *new_args = tuple_raw(NULL, 0);
+	gc_root((Object*)new_args);
+	Object *result = call(method, new_args);
+	gc_unroot((Object*)new_args);
 	// if we're strapped for bugs we can remove this check
 	if (result->type != &g_bool) {
-		// TODO set typeerror
+		error = exc_msg(&g_TypeError, "__bool__ did not return a bool");
 		return NULL;
 	}
 	return result;
 }
 
 Object *builtin_constructor(Object *self, TupleObject *args) {
-	// TODO set go fuck yourself error
+	error = exc_msg(&g_RuntimeError, "how did you do that");
 	return NULL;
 }
 
 Object *dict_constructor(Object *self, TupleObject *args) {
-	// TODO support non-null constructors
-	if (args->len != 0) {
-		// TODO set typeerror
-		return NULL;
+	if (args->len == 0) {
+		return (Object*)dicto_raw();
+	} else if (args->len == 1) {
+		if (args->data[0]->type != &g_dict) {
+			error = exc_msg(&g_TypeError, "Expected dict");
+			return NULL;
+		}
+		DictObject *input = (DictObject*)args->data[0];
+		DictObject *result = dicto_raw();
+		gc_root((Object*)result);
+		bool inner_tracer(void *key, void **val) {
+			return dict_set(&result->core, key, *val, object_hasher, object_equals);
+		}
+		if (!dict_trace(&input->core, inner_tracer)) {
+			gc_unroot((Object*)result);
+			return NULL;
+		}
+		gc_unroot((Object*)result);
+		return (Object*)result;
 	}
-	return (Object*)dicto_raw();
+	error = exc_msg(&g_TypeError, "Expected 0 or 1 arguments");
+	return NULL;
+}
+
+DictObject *dict_dup_inner(DictObject *self) {
+	TupleObject *args = tuple_raw((Object**)&self, 1);
+	gc_root((Object*)args);
+	Object *result = dict_constructor(NULL, args);
+	gc_unroot((Object*)args);
+	return (DictObject*)result;
 }
 
 Object *nonetype_constructor(Object *self, TupleObject *args) {
 	if (args->len != 0) {
-		// TODO set typeerror
+		error = exc_msg(&g_TypeError, "Expected 0 arguments");
 		return NULL;
 	}
 	return (Object*)&g_none;
 }
 
 Object *boundmeth_constructor(Object *self, TupleObject *args) {
-	// TODO set go fuck yourself error
+	error = exc_msg(&g_RuntimeError, "how did you do that");
 	return NULL;
 }
 
@@ -884,14 +985,14 @@ bool boundmeth_trace(Object *_self, bool (*tracer)(Object *tracee)) {
 
 Object *boundmeth_get_attr(Object *_self, Object *name) {
 	BoundMethodObject *self = (BoundMethodObject*)_self;
-	if (object_equals(name, (Object*)bytes_raw("method", 4)).equals) {
+	if (object_equals_str(name, "method")) {
 		return (Object*)self->method;
 	}
-	if (object_equals(name, (Object*)bytes_raw("self", 4)).equals) {
+	if (object_equals_str(name, "self")) {
 		return (Object*)self->self;
 	}
 
-	// TODO set attributeerror
+	error = exc_arg(&g_AttributeError, name);
 	return NULL;
 }
 
@@ -900,27 +1001,38 @@ Object *boundmeth_call(Object *_self, TupleObject *args) {
 	Object **stuff = alloca(sizeof(Object*) * (args->len + 1));
 	stuff[0] = self->self;
 	memcpy(&stuff[1], args->data, sizeof(Object*) * args->len);
-	return call(self->method, tuple_raw(stuff, args->len + 1));
+	TupleObject *new_args = tuple_raw(stuff, args->len + 1);
+	if (new_args == NULL) {
+		return NULL;
+	}
+	gc_root((Object*)new_args);
+	Object *result = call(self->method, new_args);
+	gc_unroot((Object*)new_args);
+	return result;
 }
 
 bool bytes_unowned_trace(Object *_self, bool (*tracer)(Object *tracee)) {
 	BytesUnownedObject *self = (BytesUnownedObject*)_self;
+	if (self->owner == NULL) {
+		// interned string
+		return true;
+	}
 	return tracer(self->owner);
 }
 
 Object *bytes_unowned_get_attr(Object *_self, Object *name) {
 	BytesUnownedObject *self = (BytesUnownedObject*)_self;
-	if (object_equals(name, (Object*)bytes_raw("len", 3)).equals) {
+	if (object_equals_str(name, "len")) {
 		return (Object*)int_raw(self->header_bytes.len);
 	}
 
-	// TODO set attributeerror
+	error = exc_arg(&g_AttributeError, name);
 	return NULL;
 }
 
 Object *slice_constructor(Object *self, TupleObject *args) {
 	if (args->len != 2) {
-		// TODO set typeerror
+		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
 	return (Object*)slice_raw(args->data[0], args->data[1]);
@@ -935,14 +1047,34 @@ bool slice_trace(Object *_self, bool (*tracer)(Object *tracee)) {
 
 Object *slice_get_attr(Object *_self, Object *name) {
 	SliceObject *self = (SliceObject*)_self;
-	if (object_equals(name, (Object*)bytes_raw("start", 5)).equals) {
+	if (object_equals_str(name, "start")) {
 		return self->start;
 	}
-	if (object_equals(name, (Object*)bytes_raw("end", 5)).equals) {
+	if (object_equals_str(name, "end")) {
 		return self->end;
 	}
 
-	// TODO set attributeerror
+	error = exc_arg(&g_AttributeError, name);
+	return NULL;
+}
+
+Object *exc_constructor(Object *self, TupleObject *args) {
+	return (Object*)exc_raw((TypeObject*)self, args);
+}
+
+bool exc_trace(Object *_self, bool (*tracer)(Object *tracee)) {
+	ExceptionObject *self = (ExceptionObject*)_self;
+	if (!tracer((Object*)self->args)) return false;
+	return true;
+}
+
+Object *exc_get_attr(Object *_self, Object *name) {
+	ExceptionObject *self = (ExceptionObject*)_self;
+	if (object_equals_str(name, "args")) {
+		return (Object*)self->args;
+	}
+
+	error = exc_arg(&g_AttributeError, name);
 	return NULL;
 }
 
@@ -951,7 +1083,10 @@ Object *get_attr_inner(Object *self, char *name) {
 	if (!temp) {
 		return NULL;
 	}
-	return get_attr(self, temp);
+	gc_root(temp);
+	Object *result = get_attr(self, temp);
+	gc_unroot(temp);
+	return result;
 }
 Object *get_attr(Object *self, Object *name) {
 	Object *result;
@@ -959,6 +1094,8 @@ Object *get_attr(Object *self, Object *name) {
 	if (result != NULL) {
 		return result;
 	}
+	error = NULL;
+
 	// is this right?
 	if (self->table == &type_table) {
 		for (TypeObject *type = ((TypeObject*)self)->base_class; type; type = type->base_class) {
@@ -966,6 +1103,7 @@ Object *get_attr(Object *self, Object *name) {
 			if (result != NULL) {
 				return result;
 			}
+			error = NULL;
 		}
 	}
 	
@@ -978,8 +1116,10 @@ Object *get_attr(Object *self, Object *name) {
 			}
 			return result;
 		}
+		error = NULL;
 	}
 
+	error = exc_arg(&g_AttributeError, name);
 	return NULL;
 }
 bool set_attr_inner(Object *self, char *name, Object *value) {
@@ -987,7 +1127,10 @@ bool set_attr_inner(Object *self, char *name, Object *value) {
 	if (!temp) {
 		return NULL;
 	}
-	return set_attr(self, temp, value);
+	gc_root(temp);
+	bool result = set_attr(self, temp, value);
+	gc_unroot(temp);
+	return result;
 }
 bool set_attr(Object *self, Object *name, Object *value) {
 	return self->table->set_attr(self, name, value);
@@ -998,7 +1141,10 @@ bool del_attr_inner(Object *self, char *name) {
 	if (!temp) {
 		return NULL;
 	}
-	return del_attr(self, temp);
+	gc_root(temp);
+	bool result = del_attr(self, temp);
+	gc_unroot(temp);
+	return result;
 }
 bool del_attr(Object *self, Object *name) {
 	return self->table->del_attr(self, name);
@@ -1024,9 +1170,18 @@ HashResult object_hasher(void *val) {
 			.success = false,
 		};
 	}
-	Object *result = call(method, tuple_raw(NULL, 0));
+	TupleObject *args = tuple_raw(NULL, 0);
+	gc_root((Object*)args);
+	Object *result = call(method, args);
+	gc_unroot((Object*)args);
+	if (result == NULL) {
+		return (HashResult) {
+			.hash = 0,
+			.success = false,
+		};
+	}
 	if (result->type != &g_int) {
-		// TODO set typeerror
+		error = exc_msg(&g_TypeError, "__hash__ did not return an int");
 		return (HashResult) {
 			.hash = 0,
 			.success = false,
@@ -1048,16 +1203,25 @@ EqualityResult object_equals(void *_val1, void *_val2) {
 			.success = false,
 		};
 	}
-	Object *result = call(method, tuple_raw(&val2, 1));
+	TupleObject *args = tuple_raw(&val2, 1);
+	gc_root((Object*)args);
+	Object *result = call(method, args);
+	gc_unroot((Object*)args);
+	if (result == NULL) {
+		return (EqualityResult) {
+			.equals = false,
+			.success = false,
+		};
+	}
 	if (result->type != &g_bool) {
-		// TODO set typeerror
+		error = exc_msg(&g_TypeError, "__eq__ did not return a bool");
 		return (EqualityResult) {
 			.equals = false,
 			.success = false,
 		};
 	}
 	return (EqualityResult) {
-		.equals = ((IntObject*)result)->value != 0,
+		.equals = result == (Object*)&g_true,
 		.success = true,
 	};
 }
@@ -1066,6 +1230,14 @@ extern MemberInitEntry __start_static_member_adds;
 extern MemberInitEntry __stop_static_member_adds;
 __attribute__((constructor)) void init_static_adds() {
 	for (MemberInitEntry *iter = &__start_static_member_adds; iter != &__stop_static_member_adds; iter++) {
-		dict_set(&iter->self->core, (void*)bytes_raw(iter->name, strlen(iter->name)), (void*)iter->value, object_hasher, object_equals);
+		BytesUnownedObject *name = bytes_unowned_raw(iter->name, strlen(iter->name), NULL);
+		if (name == NULL) {
+			puts("Fatal error");
+			exit(1);
+		}
+		if (!dict_set(&iter->self->core, (void*)name, (void*)iter->value, object_hasher, object_equals)) {
+			puts("Fatal error");
+			exit(1);
+		}
 	}
 }

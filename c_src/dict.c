@@ -1,4 +1,5 @@
 #include "dict.h"
+#include "errors.h"
 
 #include <stdlib.h>
 #include <stdbool.h>
@@ -20,7 +21,7 @@ void dict_destruct(DictCore *dict) {
 	}
 	for (size_t bucket = 0; bucket < dict->cap; bucket++) {
 		DictChain *next;
-		while (next = dict->buckets[bucket].next) {
+		while ((next = dict->buckets[bucket].next)) {
 			dict->buckets[bucket].next = next->next;
 			free(next);
 		}
@@ -42,6 +43,14 @@ LookupResult dict_lookup(DictCore *dict, void *key, hash_func_t hash_func, equal
 			.found_any = false,
 			.is_first = false,
 			.success = false,
+		};
+	}
+
+	if (dict->cap == 0) {
+		return (LookupResult) {
+			.found_any = false,
+			.is_first = false,
+			.success = true,
 		};
 	}
 
@@ -111,6 +120,7 @@ bool dict_expand(DictCore *dict, hash_func_t hash_func) {
 	// who needs c++?
 	dict_destruct(dict);
 	*dict = temp;
+	return true;
 }
 
 bool dict_set(DictCore *dict, void *key, void *val, hash_func_t hash_func, equality_func_t equality_func) {
@@ -154,7 +164,7 @@ bool dict_set(DictCore *dict, void *key, void *val, hash_func_t hash_func, equal
 	for (link = &dict->buckets[bucket].next; *link; link = &(*link)->next);
 	*link = malloc(sizeof(DictChain));
 	if (!*link) {
-		// TODO set memoryerror
+		error = (Object*)&MemoryError_inst;
 		return false;
 	}
 	(*link)->key = key;
@@ -266,7 +276,7 @@ bool dict_trace(DictCore *dict, bool (*tracer)(void *key, void **val)) {
 	for (size_t bucket = 0; bucket < dict->cap; bucket++) {
 		for (DictChain *cur = &dict->buckets[bucket]; cur && cur->key; cur = cur->next) {
 			if (generation != dict->generation) {
-				// TODO set runtimeerror
+				error = exc_msg(&g_RuntimeError, "Dict was modified during iteration");
 				return false;
 			}
 			if (!tracer(cur->key, &cur->val)) {
@@ -289,7 +299,7 @@ bool dict_popwhere(DictCore *dict, bool (*predicate)(void *key, void *val)) {
 			size_t generation = dict->generation;
 			bool check = predicate(lookup_key(&iter), lookup_val(&iter));
 			if (dict->generation != generation) {
-				// TODO set runtimeerror
+				error = exc_msg(&g_RuntimeError, "Dict was modified during iteration");
 				return false;
 			}
 			if (check) {
@@ -301,4 +311,5 @@ bool dict_popwhere(DictCore *dict, bool (*predicate)(void *key, void *val)) {
 			}
 		}
 	}
+	return true;
 }

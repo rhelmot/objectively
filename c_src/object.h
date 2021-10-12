@@ -9,6 +9,7 @@
 typedef struct ObjectHeader Object;
 typedef struct TupleObject TupleObject;
 typedef struct TypeObject TypeObject;
+typedef struct BytesObject BytesObject;
 
 typedef struct ObjectTable {
 	bool (*trace)(Object *self, bool (*tracer)(Object *tracee));
@@ -56,7 +57,7 @@ typedef struct TypeObject {
 	BasicObject header_basic;
 	TypeObject *base_class;
 	Object *(*constructor)(Object *self, TupleObject *args);
-	Object *name;
+	BytesObject *name;
 } TypeObject;
 bool type_trace(Object *self, bool (*tracer)(Object *tracee));
 Object *type_get_attr(Object *self, Object *name);
@@ -105,12 +106,12 @@ Object *bytes_get_attr(Object *self, Object *name);
 
 typedef struct BytesUnownedObject {
 	BytesObject header_bytes;
-	char *_data;
+	const char *_data;
 	Object *owner;
 } BytesUnownedObject;
 bool bytes_unowned_trace(Object *self, bool (*tracer)(Object *tracee));
 Object *bytes_unowned_get_attr(Object *self, Object *name);
-char *bytes_data(BytesObject *self);
+const char *bytes_data(BytesObject *self);
 
 typedef struct BuiltinFunctionObject {
 	ObjectHeader header;
@@ -137,6 +138,13 @@ bool boundmeth_trace(Object *self, bool (*tracer)(Object *tracee));
 Object *boundmeth_get_attr(Object *self, Object *name);
 Object *boundmeth_call(Object *self, TupleObject *args);
 
+typedef struct ExceptionObject {
+	ObjectHeader header;
+	TupleObject *args;
+} ExceptionObject;
+bool exc_trace(Object *self, bool (*tracer)(Object *tracee));
+Object *exc_get_attr(Object *self, Object *name);
+
 Object *get_attr(Object *self, Object *name);
 bool set_attr(Object *self, Object *name, Object *value);
 bool del_attr(Object *self, Object *name);
@@ -162,12 +170,19 @@ extern TypeObject g_nonetype;
 extern TypeObject g_boundmeth;
 extern TypeObject g_slice;
 extern TypeObject g_object;
+extern TypeObject g_exception;
 
 extern EmptyObject g_none;
 extern EmptyObject g_true;
 extern EmptyObject g_false;
 
+extern TupleObject empty_tuple;
+
 extern ObjectTable builtinfunction_table;
+extern ObjectTable dicto_table;
+extern ObjectTable bytes_unowned_table;
+extern ObjectTable exc_table;
+extern ObjectTable type_table;
 
 IntObject *int_raw(int64_t value);
 EmptyObject *bool_raw(bool value);
@@ -175,11 +190,18 @@ FloatObject *float_raw(double value);
 ListObject *list_raw(Object **data, size_t len);
 TupleObject *tuple_raw(Object **data, size_t len);
 BytesObject *bytes_raw(const char *data, size_t len);
-BytesUnownedObject *bytes_unowned_raw(char *data, size_t len, Object *owner);
+BytesUnownedObject *bytes_unowned_raw(const char *data, size_t len, Object *owner);
 DictObject *dicto_raw();
 BasicObject *object_raw(TypeObject *type);
 ClosureObject *closure_raw(BytesObject *name, BytesObject *bytecode, DictObject *context);
 BoundMethodObject *boundmeth_raw(Object *meth, Object *self);
+SliceObject *slice_raw(Object *start, Object *end);
+ExceptionObject *exc_raw(TypeObject *type, TupleObject *args);
+
+Object *exc_constructor(Object *self, TupleObject *args);
+Object *dict_constructor(Object *self, TupleObject *args);
+DictObject *dict_dup_inner(DictObject *self);
+BytesObject *bytes_constructor_inner(Object *arg);
 
 typedef struct MemberInitEntry {
 	DictObject *self;
@@ -188,8 +210,36 @@ typedef struct MemberInitEntry {
 } MemberInitEntry;
 
 #define ADD_MEMBER(cls, s_name, s_value) \
-static MemberInitEntry static_add_##cls##_##s_value __attribute((used, section("static_member_adds"))) = { \
+static MemberInitEntry static_add_##cls##_##s_value __attribute((used, section("static_member_adds"), aligned(8))) = { \
 	.self = (DictObject*)(&cls), \
 	.name = (s_name), \
 	.value = (Object*)(&s_value), \
 }
+
+#include "gc.h"
+#include "builtins.h"
+#define INTERNED_STRING(var_name, s_val) \
+BytesUnownedObject var_name = { \
+	.header_bytes.header = { \
+		.table = &bytes_unowned_table, \
+		.type = &g_bytes, \
+	}, \
+	.header_bytes.len = sizeof(s_val) - 1, \
+	._data = s_val, \
+};\
+STATIC_OBJECT(var_name);
+
+#define BUILTIN_TYPE(s_name, base, cons_func) \
+Object *(cons_func)(Object *self, TupleObject *args); \
+INTERNED_STRING(g_##s_name##_name, #s_name); \
+TypeObject g_##s_name = { \
+	.header_basic.header_dict.header = { \
+		.table = &type_table, \
+		.type = &g_type, \
+	}, \
+	.base_class = &g_##base, \
+	.constructor = (cons_func), \
+	.name = (BytesObject*)&g_##s_name##_name, \
+}; \
+STATIC_OBJECT(g_##s_name); \
+ADD_MEMBER(builtins, #s_name, g_##s_name)
