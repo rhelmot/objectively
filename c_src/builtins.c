@@ -1127,6 +1127,16 @@ Object *object_bool(TupleObject *args) {
 }
 BUILTIN_METHOD(__bool__, object_bool, object);
 
+Object *object_not(TupleObject *args) {
+	if  (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	EmptyObject *bool_result = bool_constructor_inner(args->data[0]);
+	return bool_result == &g_true ? (Object*)&g_false : (Object*)&g_true;
+}
+BUILTIN_METHOD(__not__, object_not, object);
+
 /////////////////////////////////////
 /// freestanding methods
 /////////////////////////////////////

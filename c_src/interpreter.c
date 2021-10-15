@@ -7,58 +7,64 @@
 
 typedef enum Opcode {
 	ERROR = 0,
-	ST_SWAP,
-	ST_POP,
-	LIT_BYTES,
-	LIT_INT,
-	LIT_FLOAT,
-	LIT_SLICE,
-	LIT_NONE,
-	LIT_TRUE,
-	LIT_FALSE,
-	TUPLE_0,
-	TUPLE_1,
-	TUPLE_2,
-	TUPLE_3,
-	TUPLE_4,
-	TUPLE_N,
-	CLOSURE,
-	GET_ATTR,
-	SET_ATTR,
-	DEL_ATTR,
-	GET_ITEM,
-	SET_ITEM,
-	DEL_ITEM,
-	GET_LOCAL,
-	SET_LOCAL,
-	DEL_LOCAL,
-	LOAD_ARGS,
-	JUMP,
-	JUMP_IF,
-	TRY,
-	TRY_END,
-	CALL,
-	//SPAWN,
-	RAISE,
-	RETURN,
-	//YIELD,
-	OP_ADD,
-	OP_SUB,
-	OP_MUL,
-	OP_DIV,
-	OP_MOD,
-	OP_AND,
-	OP_OR,
-	OP_XOR,
-	OP_NEG,
-	OP_NOT,
-	OP_INV,
-	OP_EQ,
-	OP_NE,
-	OP_GT,
-	OP_LT,
-	OP_GE,
-	OP_LE,
+	ST_SWAP = 1,
+	ST_POP = 2,
+	ST_DUP = 3,
+	LIT_BYTES = 10,
+	LIT_INT = 11,
+	LIT_FLOAT = 12,
+	LIT_SLICE = 13,
+	LIT_NONE = 14,
+	LIT_TRUE = 15,
+	LIT_FALSE = 16,
+	TUPLE_0 = 17,
+	TUPLE_1 = 18,
+	TUPLE_2 = 19,
+	TUPLE_3 = 20,
+	TUPLE_4 = 21,
+	TUPLE_N = 22,
+	CLOSURE = 23,
+	CLOSURE_BIND = 24,
+	EMPTY_DICT = 25,
+	CLASS = 26,
+	GET_ATTR = 40,
+	SET_ATTR = 41,
+	DEL_ATTR = 42,
+	GET_ITEM = 43,
+	SET_ITEM = 44,
+	DEL_ITEM = 45,
+	GET_LOCAL = 46,
+	SET_LOCAL = 47,
+	DEL_LOCAL = 48,
+	LOAD_ARGS = 49,
+	JUMP = 60,
+	JUMP_IF = 61,
+	TRY = 62,
+	TRY_END = 63,
+	CALL = 64,
+	SPAWN = 65,
+	RAISE = 66,
+	RETURN = 67,
+	YIELD = 68,
+	OP_ADD = 80,
+	OP_SUB = 81,
+	OP_MUL = 82,
+	OP_DIV = 83,
+	OP_MOD = 84,
+	OP_AND = 85,
+	OP_OR = 86,
+	OP_XOR = 87,
+	OP_NEG = 88,
+	OP_NOT = 89,
+	OP_INV = 90,
+	OP_EQ = 91,
+	OP_NE = 92,
+	OP_GT = 93,
+	OP_LT = 94,
+	OP_GE = 95,
+	OP_LE = 96,
+	OP_SHL = 97,
+	OP_SHR = 98,
 } Opcode;
 
 #define ENSURE_BYTES(n) ((ssize_t)(*pointer - bytes_data(bytecode) + (n)) <= (ssize_t)bytecode->len)
@@ -84,7 +90,7 @@ bool next_num_unsigned(BytesObject *bytecode, const char **pointer, uint64_t *ou
 		(*pointer)++;
 		result |= (next & 0x7f) << shift;
 		shift += 7;
-		if (next & 0x80) {
+		if ((next & 0x80) == 0) {
 			*out = result;
 			return true;
 		}
@@ -102,7 +108,7 @@ bool next_num_signed(BytesObject *bytecode, const char **pointer, int64_t *out) 
 		(*pointer)++;
 		result |= (next & 0x7f) << shift;
 		shift += 7;
-		if (next & 0x80) {
+		if ((next & 0x80) == 0) {
 			if (shift < 64 && (next & 0x40)) {
 				result |= ~0 << shift;
 			}
@@ -186,6 +192,10 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 			}
 		}
 		gc_probe();
+		if (pointer == &bytes_data(closure->bytecode)[closure->bytecode->len]) {
+			result = (Object*)&g_none;
+			break;
+		}
 		Opcode opcode = next_opcode(closure->bytecode, &pointer);
 		switch (opcode) {
 
@@ -214,6 +224,12 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 			}
 			case ST_POP: {
 				POP();
+				continue;
+			}
+			case ST_DUP: {
+				Object *a1 = POP();
+				PUSH(a1);
+				PUSH(a1);
 				continue;
 			}
 			case LIT_BYTES: {
@@ -273,17 +289,40 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 				continue;
 			}
 			case CLOSURE: {
-				BytesUnownedObject *name = NEXT_BYTES();
 				Object *code = POP();
 				if (code->type != &g_bytes) {
 					error = exc_msg(&g_TypeError, "Expected bytes");
 					break;
 				}
-				ClosureObject *result = closure_raw((BytesObject*)name, (BytesObject*)code, locals);
-				if (result == NULL) {
+				PUSH(CHECK(closure_raw((BytesObject*)code, locals)));
+				continue;
+			}
+			case CLOSURE_BIND: {
+				Object *code = POP();
+				uint64_t num_idents = NEXT_NUM_UNSIGNED();
+				if (code->type != &g_bytes) {
+					error = exc_msg(&g_TypeError, "Expected bytes");
 					break;
 				}
-				PUSH(result);
+
+				DictObject *new_context = CHECK(dicto_raw());
+				for (uint64_t i = 0; i < num_idents; i++) {
+					BytesUnownedObject *name = NEXT_BYTES();
+					Object *value = CHECK(dict_getitem(TEMP_ARGS2((Object*)locals, (Object*)name)));
+					CHECK(dict_setitem(TEMP_ARGS3((Object*)new_context, (Object*)name, value)));
+				}
+
+				PUSH(CHECK(closure_raw((BytesObject*)code, locals)));
+				continue;
+			}
+			case EMPTY_DICT: {
+				PUSH(CHECK(dicto_raw()));
+				continue;
+			}
+			case CLASS: {
+				Object *dict = POP();
+				Object *base = POP();
+				PUSH(CHECK(type_constructor(NULL, TEMP_ARGS2(base, dict))));
 				continue;
 			}
 			case GET_ATTR: {
@@ -460,6 +499,14 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 				BINOP(le);
 				continue;
 			}
+			case OP_SHL: {
+				BINOP(shl);
+				continue;
+			}
+			case OP_SHR: {
+				BINOP(shr);
+				continue;
+			}
 			default: {
 				error = exc_msg(&g_RuntimeError, "Bad opcode");
 				break;
@@ -481,7 +528,7 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 			POP(); // ok to use this outside the switch
 		}
 		if (!list_push_back_inner(stack, error)) {
-			// TODO set memoryerror
+			error = (Object*)&g_MemoryError;
 			// disard the entire try stack and just bail out
 			goto EXIT;
 		}

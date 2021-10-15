@@ -57,7 +57,6 @@ typedef struct TypeObject {
 	BasicObject header_basic;
 	TypeObject *base_class;
 	Object *(*constructor)(Object *self, TupleObject *args);
-	BytesObject *name;
 } TypeObject;
 bool type_trace(Object *self, bool (*tracer)(Object *tracee));
 Object *type_get_attr(Object *self, Object *name);
@@ -121,7 +120,6 @@ Object *builtinfunction_call(Object *self, TupleObject *args);
 
 typedef struct ClosureObject {
 	ObjectHeader header;
-	BytesObject *name;
 	BytesObject *bytecode;
 	DictObject *context;
 } ClosureObject;
@@ -193,15 +191,17 @@ BytesObject *bytes_raw(const char *data, size_t len);
 BytesUnownedObject *bytes_unowned_raw(const char *data, size_t len, Object *owner);
 DictObject *dicto_raw();
 BasicObject *object_raw(TypeObject *type);
-ClosureObject *closure_raw(BytesObject *name, BytesObject *bytecode, DictObject *context);
+ClosureObject *closure_raw(BytesObject *bytecode, DictObject *context);
 BoundMethodObject *boundmeth_raw(Object *meth, Object *self);
 SliceObject *slice_raw(Object *start, Object *end);
 ExceptionObject *exc_raw(TypeObject *type, TupleObject *args);
 
 Object *exc_constructor(Object *self, TupleObject *args);
 Object *dict_constructor(Object *self, TupleObject *args);
+Object *type_constructor(Object *self, TupleObject *args);
 DictObject *dict_dup_inner(DictObject *self);
 BytesObject *bytes_constructor_inner(Object *arg);
+EmptyObject *bool_constructor_inner(Object *arg);
 
 typedef struct MemberInitEntry {
 	DictObject *self;
@@ -231,7 +231,6 @@ STATIC_OBJECT(var_name);
 
 #define BUILTIN_TYPE(s_name, base, cons_func) \
 Object *(cons_func)(Object *self, TupleObject *args); \
-INTERNED_STRING(g_##s_name##_name, #s_name); \
 TypeObject g_##s_name = { \
 	.header_basic.header_dict.header = { \
 		.table = &type_table, \
@@ -239,7 +238,6 @@ TypeObject g_##s_name = { \
 	}, \
 	.base_class = &g_##base, \
 	.constructor = (cons_func), \
-	.name = (BytesObject*)&g_##s_name##_name, \
 }; \
 STATIC_OBJECT(g_##s_name); \
 ADD_MEMBER(builtins, #s_name, g_##s_name)

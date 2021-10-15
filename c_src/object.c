@@ -133,7 +133,6 @@ ObjectTable exc_table = {
 
 
 Object *object_constructor(Object *self, TupleObject *args);
-INTERNED_STRING(g_object_name, "object");
 TypeObject g_object = {
 	.header_basic.header_dict.header = {
 		.table = &type_table,
@@ -141,7 +140,6 @@ TypeObject g_object = {
 	},
 	.base_class = NULL,
 	.constructor = object_constructor,
-	.name = (BytesObject*)&g_object_name,
 };
 STATIC_OBJECT(g_object);
 ADD_MEMBER(builtins, "object", g_object);
@@ -344,7 +342,7 @@ BasicObject *object_raw(TypeObject *type) {
 	return result;
 }
 
-ClosureObject *closure_raw(BytesObject *name, BytesObject *bytecode, DictObject *context) {
+ClosureObject *closure_raw(BytesObject *bytecode, DictObject *context) {
 	ClosureObject *result = (ClosureObject*)gc_malloc(sizeof(ClosureObject));
 	if (!result) {
 		error = (Object*)&MemoryError_inst;
@@ -354,7 +352,6 @@ ClosureObject *closure_raw(BytesObject *name, BytesObject *bytecode, DictObject 
 		.type = &g_closure,
 		.table = &closure_table,
 	};
-	result->name = name;
 	result->bytecode = bytecode;
 	result->context = context;
 	return result;
@@ -729,24 +726,18 @@ Object *builtinfunction_call(Object *_self, TupleObject *args) {
 Object *type_constructor(Object *_self, TupleObject *args) {
 	if (args->len == 1) {
 		return (Object*)args->data[0]->type;
-	} else if (args->len == 3) {
+	} else if (args->len == 2) {
 		// OH BOY
-		// first arg (name) must be a string
-		// second arg (base) must be a TypeObject
-		// third arg (dict) must be a dict
-		Object *_arg0 = args->data[0];
-		if (_arg0->type != &g_bytes) {
-			error = exc_msg(&g_TypeError, "Argument 1: expected bytes");
-			return NULL;
-		}
-		Object *_arg1 = args->data[1];
+		// first arg (base) must be a TypeObject
+		// second arg (dict) must be a dict
+		Object *_arg1 = args->data[0];
 		if (_arg1->type != &g_type) {
-			error = exc_msg(&g_TypeError, "Argument 2: expected type");
+			error = exc_msg(&g_TypeError, "Argument 1: expected type");
 			return NULL;
 		}
-		Object *_arg2 = args->data[2];
-		if (_arg1->type != &g_dict) {
-			error = exc_msg(&g_TypeError, "Argument 3: expected dict");
+		Object *_arg2 = args->data[1];
+		if (_arg2->type != &g_dict) {
+			error = exc_msg(&g_TypeError, "Argument 2: expected dict");
 			return NULL;
 		}
 		DictObject *arg2 = (DictObject*)_arg2;
@@ -757,14 +748,13 @@ Object *type_constructor(Object *_self, TupleObject *args) {
 		};
 		result->base_class = (TypeObject*)_arg1,
 		result->constructor = result->base_class->constructor;
-		result->name = (BytesObject*)_arg0;
 		bool inner_tracer(void *key, void **val) {
 			return dict_set(&result->header_basic.header_dict.core, key, *val, object_hasher, object_equals);
 		}
 		dict_trace(&arg2->core, inner_tracer);
 		return (Object*)result;
 	} else {
-		error = exc_msg(&g_TypeError, "Expected 1 or 3 arguments");
+		error = exc_msg(&g_TypeError, "Expected 1 or 2 arguments");
 		return NULL;
 	}
 }
@@ -775,7 +765,6 @@ bool type_trace(Object *_self, bool (*tracer)(Object *tracee)) {
 	if (self->base_class) {
 		if (!tracer((Object*)self->base_class)) return false;
 	}
-	if (!tracer((Object*)self->name)) return false;
 	return true;
 }
 
@@ -798,29 +787,24 @@ Object *type_call(Object *_self, TupleObject *args) {
 }
 
 Object *closure_constructor(Object *self, TupleObject *args) {
-	if (args->len != 3) {
-		error = exc_msg(&g_TypeError, "Expected 3 arguments");
+	if (args->len != 2) {
+		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
 	if (args->data[0]->type != &g_bytes) {
 		error = exc_msg(&g_TypeError, "Argument 1: expected bytes");
 		return NULL;
 	}
-	if (args->data[1]->type != &g_bytes) {
-		error = exc_msg(&g_TypeError, "Argument 2: expected bytes");
-		return NULL;
-	}
-	if (args->data[2]->type != &g_dict) {
-		error = exc_msg(&g_TypeError, "Argument 3: expected dict");
+	if (args->data[1]->type != &g_dict) {
+		error = exc_msg(&g_TypeError, "Argument 2: expected dict");
 		return NULL;
 	}
 
-	return (Object*)closure_raw((BytesObject*)args->data[0], (BytesObject*)args->data[1], (DictObject*)args->data[2]);
+	return (Object*)closure_raw((BytesObject*)args->data[0], (DictObject*)args->data[1]);
 }
 
 bool closure_trace(Object *_self, bool (*tracer)(Object *tracee)) {
 	ClosureObject *self = (ClosureObject*)_self;
-	if (!tracer((Object*)self->name)) return false;
 	if (!tracer((Object*)self->bytecode)) return false;
 	if (!tracer((Object*)self->context)) return false;
 	return true;
@@ -828,9 +812,6 @@ bool closure_trace(Object *_self, bool (*tracer)(Object *tracee)) {
 
 Object *closure_get_attr(Object *_self, Object *name) {
 	ClosureObject *self = (ClosureObject*)_self;
-	if (object_equals_str(name, "name")) {
-		return (Object*)self->name;
-	}
 	if (object_equals_str(name, "code")) {
 		return (Object*)self->bytecode;
 	}
@@ -923,6 +904,17 @@ Object *bool_constructor(Object *self, TupleObject *args) {
 		return NULL;
 	}
 	return result;
+}
+
+EmptyObject *bool_constructor_inner(Object *obj) {
+	TupleObject *inner_args = tuple_raw(&obj, 1);
+	if (inner_args == NULL) {
+		return NULL;
+	}
+	gc_root((Object*)inner_args);
+	Object *result = bool_constructor(NULL, inner_args);
+	gc_unroot((Object*)inner_args);
+	return (EmptyObject*)result;
 }
 
 Object *builtin_constructor(Object *self, TupleObject *args) {

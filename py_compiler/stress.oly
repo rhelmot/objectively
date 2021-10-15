@@ -1,0 +1,18 @@
+hello = fn() {
+	print("Hello, world!");
+};
+hello();
+
+A = class(object) {
+	__init__ = fn(self, a) {
+		self.a = a;
+		self.b = 1;
+	};
+
+	c = fn(self, d, e) {
+		return self.a + self.b + d + e;
+	};
+};
+
+a = A(2);
+return a.c(4, 8);

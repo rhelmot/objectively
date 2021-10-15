@@ -31,7 +31,7 @@ int main(int argc, char **argv) {
 		argv_converted[i] = (Object*)bytes_raw(argv[i + 2], strlen(argv[i + 2]));
 	}
 	TupleObject *argv_obj = tuple_raw(argv_converted, argc - 2);
-	ClosureObject *real_main = closure_raw(bytes_raw("__main__", 8), bytes, &builtins);
+	ClosureObject *real_main = closure_raw(bytes, &builtins);
 
 	gc_root((Object*)real_main);
 	gc_root((Object*)argv_obj);
