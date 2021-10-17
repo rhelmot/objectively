@@ -10,6 +10,7 @@ typedef enum Opcode {
 	ST_SWAP = 1,
 	ST_POP = 2,
 	ST_DUP = 3,
+	ST_DUP2 = 4,
 	LIT_BYTES = 10,
 	LIT_INT = 11,
 	LIT_FLOAT = 12,
@@ -67,7 +68,7 @@ typedef enum Opcode {
 	OP_SHR = 98,
 } Opcode;
 
-#define ENSURE_BYTES(n) ((ssize_t)(*pointer - bytes_data(bytecode) + (n)) <= (ssize_t)bytecode->len)
+#define ENSURE_BYTES(n) ((size_t)(*pointer - bytes_data(bytecode) + (n)) <= bytecode->len)
 
 Opcode next_opcode(BytesObject *bytecode, const char **pointer) {
 	if (!ENSURE_BYTES(1)) {
@@ -81,14 +82,14 @@ Opcode next_opcode(BytesObject *bytecode, const char **pointer) {
 bool next_num_unsigned(BytesObject *bytecode, const char **pointer, uint64_t *out) {
 	// https://en.wikipedia.org/wiki/LEB128
 	uint64_t result = 0;
-	int shift = 0;
+	uint64_t shift = 0;
 	while (true) {
 		if (!ENSURE_BYTES(1)) {
 			return false;
 		}
 		unsigned char next = **pointer;
 		(*pointer)++;
-		result |= (next & 0x7f) << shift;
+		result |= (uint64_t)(next & 0x7f) << shift;
 		shift += 7;
 		if ((next & 0x80) == 0) {
 			*out = result;
@@ -99,14 +100,14 @@ bool next_num_unsigned(BytesObject *bytecode, const char **pointer, uint64_t *ou
 
 bool next_num_signed(BytesObject *bytecode, const char **pointer, int64_t *out) {
 	int64_t result = 0;
-	int shift = 0;
+	uint64_t shift = 0;
 	while (true) {
 		if (!ENSURE_BYTES(1)) {
 			return false;
 		}
 		unsigned char next = **pointer;
 		(*pointer)++;
-		result |= (next & 0x7f) << shift;
+		result |= (uint64_t)(next & 0x7f) << shift;
 		shift += 7;
 		if ((next & 0x80) == 0) {
 			if (shift < 64 && (next & 0x40)) {
@@ -187,7 +188,7 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 	while (true) {
 		while (temproot->len) {
 			if (!list_pop_back_inner(temproot)) {
-				puts("Fatal error");
+				puts("Fatal error: could not pop temproot");
 				exit(1);
 			}
 		}
@@ -200,7 +201,7 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 		switch (opcode) {
 
 #define CHECK(_val) ({ __typeof__(_val) _evaluated = (_val); if (!_evaluated) { break; } _evaluated; })
-#define POP() ({ Object *_popped = list_pop_back_inner(stack); if (_popped == NULL) { puts("Fatal error"); exit(1); } _popped; })
+#define POP() ({ Object *_popped = list_pop_back_inner(stack); if (_popped == NULL) { puts("Fatal error: stack underflow"); exit(1); } _popped; })
 #define PUSH(_pushed) ({ if (!list_push_back_inner(stack, (Object*)_pushed)) { break; } })
 #define TEMPROOT(_rooted) ({ if (!list_push_back_inner(temproot, (Object*)_rooted)) { break ; } })
 #define NEXT_NUM_UNSIGNED() ({ uint64_t _lit; if (!next_num_unsigned(closure->bytecode, &pointer, &_lit)) { error = exc_msg(&g_RuntimeError, "out of bounds"); break; } _lit; })
@@ -230,6 +231,15 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 				Object *a1 = POP();
 				PUSH(a1);
 				PUSH(a1);
+				continue;
+			}
+			case ST_DUP2: {
+				Object *a2 = POP();
+				Object *a1 = POP();
+				PUSH(a1);
+				PUSH(a2);
+				PUSH(a1);
+				PUSH(a2);
 				continue;
 			}
 			case LIT_BYTES: {
@@ -306,13 +316,14 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 				}
 
 				DictObject *new_context = CHECK(dicto_raw());
+				TEMPROOT(new_context);
 				for (uint64_t i = 0; i < num_idents; i++) {
 					BytesUnownedObject *name = NEXT_BYTES();
 					Object *value = CHECK(dict_getitem(TEMP_ARGS2((Object*)locals, (Object*)name)));
 					CHECK(dict_setitem(TEMP_ARGS3((Object*)new_context, (Object*)name, value)));
 				}
 
-				PUSH(CHECK(closure_raw((BytesObject*)code, locals)));
+				PUSH(CHECK(closure_raw((BytesObject*)code, new_context)));
 				continue;
 			}
 			case EMPTY_DICT: {
@@ -322,7 +333,7 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 			case CLASS: {
 				Object *dict = POP();
 				Object *base = POP();
-				PUSH(CHECK(type_constructor(NULL, TEMP_ARGS2(base, dict))));
+				PUSH(CHECK(type_constructor((Object*)&g_type, TEMP_ARGS2(base, dict))));
 				continue;
 			}
 			case GET_ATTR: {
@@ -347,6 +358,7 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 			case GET_ITEM: {
 				Object *key = POP();
 				Object *obj = POP();
+				TEMPROOT(obj);
 				Object *getattr = CHECK(get_attr_inner(obj, "__getitem__"));
 				PUSH(CHECK(call(getattr, TEMP_ARGS1(key))));
 				continue;
@@ -355,6 +367,7 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 				Object *val = POP();
 				Object *key = POP();
 				Object *obj = POP();
+				TEMPROOT(obj);
 				Object *setattr = CHECK(get_attr_inner(obj, "__setitem__"));
 				CHECK(call(setattr, TEMP_ARGS2(key, val)));
 				continue;
@@ -362,6 +375,7 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 			case DEL_ITEM: {
 				Object *key = POP();
 				Object *obj = POP();
+				TEMPROOT(obj);
 				Object *delattr = CHECK(get_attr_inner(obj, "__delitem__"));
 				CHECK(call(delattr, TEMP_ARGS1(key)));
 				continue;
@@ -393,6 +407,7 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 			case JUMP_IF: {
 				size_t off = NEXT_OFFSET();
 				Object *cond = POP();
+				TEMPROOT(cond);
 				Object *boolfunc = CHECK(get_attr_inner(cond, "__bool__"));
 				Object *evaluated_cond = CHECK(call(boolfunc, TEMP_ARGS0()));
 				if (evaluated_cond->type != &g_bool) {
@@ -420,6 +435,8 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 					error = exc_msg(&g_TypeError, "Expected tuple");
 					break;
 				}
+				TEMPROOT(args);
+				TEMPROOT(target);
 				PUSH(CHECK(call(target, (TupleObject*)args)));
 				continue;
 			}
@@ -513,12 +530,14 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 			}
 		}
 
+		Object *local_error = error;
 		Object *_catch_target = list_pop_back_inner(trystack);
 		if (_catch_target == NULL) {
+			error = local_error;
 			goto EXIT;
 		}
 		if (_catch_target->type != (TypeObject*)&g_int) {
-			puts("Fatal error");
+			puts("Fatal error: catch target was not int");
 			exit(1);
 		}
 		size_t catch_target = ((IntObject*)_catch_target)->value;
@@ -528,7 +547,7 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 			POP(); // ok to use this outside the switch
 		}
 		if (!list_push_back_inner(stack, error)) {
-			error = (Object*)&g_MemoryError;
+			error = (Object*)&MemoryError_inst;
 			// disard the entire try stack and just bail out
 			goto EXIT;
 		}

@@ -226,6 +226,15 @@ IntObject *int_raw(int64_t value) {
 	return result;
 }
 
+IntObject *int_raw_ex(int64_t value, TypeObject *type) {
+	IntObject *result = int_raw(value);
+	if (result == NULL) {
+		return NULL;
+	}
+	result->header.type = type;
+	return result;
+}
+
 EmptyObject *bool_raw(bool value) {
 	return value ? &g_true : &g_false;
 }
@@ -241,6 +250,15 @@ FloatObject *float_raw(double value) {
 		.type = &g_float,
 	};
 	result->value = value;
+	return result;
+}
+
+FloatObject *float_raw_ex(double value, TypeObject *type) {
+	FloatObject *result = float_raw(value);
+	if (result == NULL) {
+		return NULL;
+	}
+	result->header.type = type;
 	return result;
 }
 
@@ -266,6 +284,15 @@ ListObject *list_raw(Object **data, size_t len) {
 	return result;
 }
 
+ListObject *list_raw_ex(Object **data, size_t len, TypeObject *type) {
+	ListObject *result = list_raw(data, len);
+	if (result == NULL) {
+		return NULL;
+	}
+	result->header.type = type;
+	return result;
+}
+
 TupleObject *tuple_raw(Object **data, size_t len) {
 	if (len == 0) {
 		return &empty_tuple;
@@ -280,7 +307,27 @@ TupleObject *tuple_raw(Object **data, size_t len) {
 		.table = &tuple_table,
 	};
 	result->len = len;
-	memcpy(result->data, data, sizeof(Object*) * len);
+	if (data != NULL) {
+		memcpy(result->data, data, sizeof(Object*) * len);
+	}
+	return result;
+}
+
+TupleObject *tuple_raw_ex(Object **data, size_t len, TypeObject *type) {
+	// duplicated logic to avoid the empty_tuple singleton
+	TupleObject *result = (TupleObject*)gc_malloc(sizeof(TupleObject) + sizeof(Object*) * len);
+	if (!result) {
+		error = (Object*)&MemoryError_inst;
+		return NULL;
+	}
+	result->header = (ObjectHeader) {
+		.type = type,
+		.table = &tuple_table,
+	};
+	result->len = len;
+	if (data != NULL) {
+		memcpy(result->data, data, sizeof(Object*) * len);
+	}
 	return result;
 }
 
@@ -295,7 +342,18 @@ BytesObject *bytes_raw(const char *data, size_t len) {
 		.table = &bytes_table,
 	};
 	result->len = len;
-	memcpy(result->_data, data, len * sizeof(char));
+	if (data != NULL) {
+		memcpy(result->_data, data, len * sizeof(char));
+	}
+	return result;
+}
+
+BytesObject *bytes_raw_ex(const char *data, size_t len, TypeObject *type) {
+	BytesObject *result = bytes_raw(data, len);
+	if (result == NULL) {
+		return NULL;
+	}
+	result->header.type = type;
 	return result;
 }
 
@@ -316,6 +374,15 @@ BytesUnownedObject *bytes_unowned_raw(const char *data, size_t len, Object *owne
 	return result;
 }
 
+BytesUnownedObject *bytes_unowned_raw_ex(const char *data, size_t len, Object *owner, TypeObject *type) {
+	BytesUnownedObject *result = bytes_unowned_raw(data, len, owner);
+	if (result == NULL) {
+		return NULL;
+	}
+	result->header_bytes.header.type = type;
+	return result;
+}
+
 DictObject *dicto_raw() {
 	DictObject *result = (DictObject *)gc_malloc(sizeof(DictObject));
 	if (!result) {
@@ -326,6 +393,15 @@ DictObject *dicto_raw() {
 		.type = &g_dict,
 		.table = &dicto_table
 	};
+	return result;
+}
+
+DictObject *dicto_raw_ex(TypeObject *type) {
+	DictObject *result = dicto_raw();
+	if (result == NULL) {
+		return NULL;
+	}
+	result->header.type = type;
 	return result;
 }
 
@@ -354,6 +430,15 @@ ClosureObject *closure_raw(BytesObject *bytecode, DictObject *context) {
 	};
 	result->bytecode = bytecode;
 	result->context = context;
+	return result;
+}
+
+ClosureObject *closure_raw_ex(BytesObject *bytecode, DictObject *context, TypeObject *type) {
+	ClosureObject *result = closure_raw(bytecode, context);
+	if (result == NULL) {
+		return NULL;
+	}
+	result->header.type = type;
 	return result;
 }
 
@@ -387,6 +472,16 @@ SliceObject *slice_raw(Object *start, Object *end) {
 	return result;
 }
 
+SliceObject *slice_raw_ex(Object *start, Object *end, TypeObject *type) {
+	SliceObject *result = slice_raw(start, end);
+	if (result == NULL) {
+		return NULL;
+	}
+	result->header.type = type;
+	return result;
+}
+
+
 ExceptionObject *exc_raw(TypeObject *type, TupleObject *args) {
 	ExceptionObject *result = (ExceptionObject*)gc_malloc(sizeof(ExceptionObject));
 	if (!result) {
@@ -403,7 +498,7 @@ ExceptionObject *exc_raw(TypeObject *type, TupleObject *args) {
 
 // MAKE SURE YOU FREE THE RESULT OF THIS! IT IS NOT GARBAGE COLLECTED!
 char *c_str(Object *arg) {
-	if (arg->type != &g_bytes) {
+	if (!isinstance_inner(arg, &g_bytes)) {
 		error = exc_msg(&g_TypeError, "Cannot use object as string");
 		return NULL;
 	}
@@ -426,7 +521,7 @@ bool object_equals_str(Object *obj, char *str) {
 	return result;
 }
 
-IntObject *bytes2int(BytesObject *arg, int64_t base) {
+IntObject *bytes2int(BytesObject *arg, int64_t base, TypeObject *type) {
 	char *buffer = c_str((Object*)arg);
 	if (buffer == NULL) {
 		return NULL;
@@ -439,10 +534,10 @@ IntObject *bytes2int(BytesObject *arg, int64_t base) {
 		error = exc_msg(&g_ValueError, "invalid string for integer conversion");
 		return NULL;
 	}
-	return int_raw(value);
+	return int_raw_ex(value, type);
 }
 
-FloatObject *bytes2float(BytesObject *arg) {
+FloatObject *bytes2float(BytesObject *arg, TypeObject *type) {
 	char *buffer = c_str((Object*)arg);
 	if (buffer == NULL) {
 		return NULL;
@@ -455,20 +550,21 @@ FloatObject *bytes2float(BytesObject *arg) {
 		error = exc_msg(&g_ValueError, "invalid string for float conversion");
 		return NULL;
 	}
-	return float_raw(value);
+	return float_raw_ex(value, type);
 }
 
-Object* int_constructor(Object *self, TupleObject *args) {
+Object* int_constructor(Object *_self, TupleObject *args) {
+	TypeObject *self = (TypeObject*)_self;
 	if (args->len == 0) {
 		return (Object*)int_raw(0);
 	} else if (args->len == 1) {
 		Object *arg = args->data[0];
-		if (arg->type == &g_int) {
-			return arg;
-		} else if (arg->type == &g_float) {
-			return (Object*)int_raw((int64_t)((FloatObject*)arg)->value);
-		} else if (arg->type == &g_bytes) {
-			return (Object*)bytes2int((BytesObject*)arg, 10);
+		if (isinstance_inner(arg, &g_int)) {
+			return (Object*)int_raw_ex(((IntObject*)arg)->value, self);
+		} else if (isinstance_inner(arg, &g_float)) {
+			return (Object*)int_raw_ex((int64_t)((FloatObject*)arg)->value, self);
+		} else if (isinstance_inner(arg, &g_bytes)) {
+			return (Object*)bytes2int((BytesObject*)arg, 10, self);
 		} else {
 			error = exc_msg(&g_TypeError, "Expected int, float, or bytes");
 			return NULL;
@@ -476,8 +572,8 @@ Object* int_constructor(Object *self, TupleObject *args) {
 	} else if (args->len == 2) {
 		Object *arg0 = args->data[0];
 		Object *arg1 = args->data[1];
-		if (arg0->type == &g_bytes && arg1->type == &g_int) {
-			return (Object*)bytes2int((BytesObject*)arg0, ((IntObject*)arg1)->value);
+		if (isinstance_inner(arg0, &g_bytes) && isinstance_inner(arg1, &g_int)) {
+			return (Object*)bytes2int((BytesObject*)arg0, ((IntObject*)arg1)->value, self);
 		} else {
 			error = exc_msg(&g_TypeError, "Expected bytes and int");
 			return NULL;
@@ -488,17 +584,18 @@ Object* int_constructor(Object *self, TupleObject *args) {
 	}
 }
 
-Object *float_constructor(Object *self, TupleObject *args) {
+Object *float_constructor(Object *_self, TupleObject *args) {
+	TypeObject *self = (TypeObject*)_self;
 	if (args->len == 0) {
 		return (Object*)float_raw(0.);
 	} else if (args->len == 1) {
 		Object *arg = args->data[0];
-		if (arg->type == &g_float) {
-			return arg;
-		} else if (arg->type == &g_int) {
-			return (Object*)float_raw((double)((IntObject*)arg)->value);
-		} else if (arg->type == &g_bytes) {
-			return (Object*)bytes2float((BytesObject*)arg);
+		if (isinstance_inner(arg, &g_float)) {
+			return (Object*)float_raw_ex(((FloatObject*)arg)->value, self);
+		} else if (isinstance_inner(arg, &g_int)) {
+			return (Object*)float_raw_ex((double)((IntObject*)arg)->value, self);
+		} else if (isinstance_inner(arg, &g_bytes)) {
+			return (Object*)bytes2float((BytesObject*)arg, self);
 		} else {
 			error = exc_msg(&g_TypeError, "Expected float or int or bytes");
 			return NULL;
@@ -632,15 +729,16 @@ Object *dicto_get_attr(Object *_self, Object *name) {
 	return NULL;
 }
 
-Object *tuple_constructor(Object *self, TupleObject *args) {
+Object *tuple_constructor(Object *_self, TupleObject *args) {
+	TypeObject *self = (TypeObject *)_self;
 	if (args->len == 0) {
-		return (Object*)tuple_raw(NULL, 0);
+		return (Object*)tuple_raw_ex(NULL, 0, self);
 	} else if (args->len == 1) {
 		Object *arg = args->data[0];
-		if (arg->type == &g_tuple) {
+		if (isinstance_inner(arg, &g_tuple)) {
 			return arg;
-		} else if (arg->type == &g_list) {
-			return (Object*)tuple_raw(((ListObject*)arg)->data, ((ListObject*)arg)->len);
+		} else if (isinstance_inner(arg, &g_list)) {
+			return (Object*)tuple_raw_ex(((ListObject*)arg)->data, ((ListObject*)arg)->len, self);
 		} else {
 			error = exc_msg(&g_TypeError, "Expected tuple or list");
 			return NULL;
@@ -671,15 +769,16 @@ Object *tuple_get_attr(Object *_self, Object *name) {
 	return NULL;
 }
 
-Object *list_constructor(Object *self, TupleObject *args) {
+Object *list_constructor(Object *_self, TupleObject *args) {
+	TypeObject *self = (TypeObject*)_self;
 	if (args->len == 0) {
-		return (Object*)list_raw(NULL, 0);
+		return (Object*)list_raw_ex(NULL, 0, self);
 	} else if (args->len == 1) {
 		Object *arg = args->data[0];
-		if (arg->type == &g_tuple) {
-			return (Object*)list_raw(((TupleObject*)arg)->data, ((TupleObject*)arg)->len);
-		} else if (arg->type == &g_list) {
-			return (Object*)list_raw(((ListObject*)arg)->data, ((ListObject*)arg)->len);
+		if (isinstance_inner(arg, &g_tuple)) {
+			return (Object*)list_raw_ex(((TupleObject*)arg)->data, ((TupleObject*)arg)->len, self);
+		} else if (isinstance_inner(arg, &g_list)) {
+			return (Object*)list_raw_ex(((ListObject*)arg)->data, ((ListObject*)arg)->len, self);
 		} else {
 			error = exc_msg(&g_TypeError, "Expected tuple or list");
 			return NULL;
@@ -723,7 +822,7 @@ Object *builtinfunction_call(Object *_self, TupleObject *args) {
 	return self->func(args);
 }
 
-Object *type_constructor(Object *_self, TupleObject *args) {
+Object *type_constructor(Object *self, TupleObject *args) {
 	if (args->len == 1) {
 		return (Object*)args->data[0]->type;
 	} else if (args->len == 2) {
@@ -731,12 +830,12 @@ Object *type_constructor(Object *_self, TupleObject *args) {
 		// first arg (base) must be a TypeObject
 		// second arg (dict) must be a dict
 		Object *_arg1 = args->data[0];
-		if (_arg1->type != &g_type) {
+		if (!isinstance_inner(_arg1, &g_type)) {
 			error = exc_msg(&g_TypeError, "Argument 1: expected type");
 			return NULL;
 		}
 		Object *_arg2 = args->data[1];
-		if (_arg2->type != &g_dict) {
+		if (!isinstance_inner(_arg2, &g_dict)) {
 			error = exc_msg(&g_TypeError, "Argument 2: expected dict");
 			return NULL;
 		}
@@ -744,7 +843,7 @@ Object *type_constructor(Object *_self, TupleObject *args) {
 		TypeObject *result = (TypeObject*)gc_malloc(sizeof(TypeObject));
 		result->header_basic.header_dict.header = (ObjectHeader) {
 			.table = &type_table,
-			.type = &g_type,
+			.type = (TypeObject*)self,
 		};
 		result->base_class = (TypeObject*)_arg1,
 		result->constructor = result->base_class->constructor;
@@ -786,21 +885,22 @@ Object *type_call(Object *_self, TupleObject *args) {
 	return self->constructor(_self, args);
 }
 
-Object *closure_constructor(Object *self, TupleObject *args) {
+Object *closure_constructor(Object *_self, TupleObject *args) {
+	TypeObject *self = (TypeObject*)_self;
 	if (args->len != 2) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_bytes) {
+	if (!isinstance_inner(args->data[0], &g_bytes)) {
 		error = exc_msg(&g_TypeError, "Argument 1: expected bytes");
 		return NULL;
 	}
-	if (args->data[1]->type != &g_dict) {
+	if (!isinstance_inner(args->data[1], &g_dict)) {
 		error = exc_msg(&g_TypeError, "Argument 2: expected dict");
 		return NULL;
 	}
 
-	return (Object*)closure_raw((BytesObject*)args->data[0], (DictObject*)args->data[1]);
+	return (Object*)closure_raw_ex((BytesObject*)args->data[0], (DictObject*)args->data[1], self);
 }
 
 bool closure_trace(Object *_self, bool (*tracer)(Object *tracee)) {
@@ -821,7 +921,7 @@ Object *closure_get_attr(Object *_self, Object *name) {
 }
 
 Object *closure_call(Object *_self, TupleObject *args) {
-	if (_self->type != &g_closure) {
+	if (!isinstance_inner(_self, &g_closure)) {
 		error = exc_msg(&g_TypeError, "how did you do that");
 		return NULL;
 	}
@@ -829,13 +929,18 @@ Object *closure_call(Object *_self, TupleObject *args) {
 	return interpreter(self, args);
 }
 
-Object *bytes_constructor(Object *self, TupleObject *args) {
+Object *bytes_constructor(Object *_self, TupleObject *args) {
+	TypeObject *self = (TypeObject*)_self;
 	if (args->len == 0) {
-		return (Object*)bytes_raw("", 0);
+		return (Object*)bytes_raw_ex("", 0, self);
 	}
 	if (args->len != 1) {
 		error = exc_msg(&g_TypeError, "Expected 0 or 1 arguments");
 		return NULL;
+	}
+	if (isinstance_inner(args->data[0], &g_bytes)) {
+		BytesObject *arg = (BytesObject*)args->data[0];
+		return (Object*)bytes_raw_ex(bytes_data(arg), arg->len, self);
 	}
 	Object *method = get_attr_inner(args->data[0], "__str__");
 	if (method == NULL) {
@@ -845,10 +950,16 @@ Object *bytes_constructor(Object *self, TupleObject *args) {
 	gc_root((Object*)new_args);
 	Object *result = call(method, new_args);
 	gc_unroot((Object*)new_args);
-	// if we're strapped for bugs we can remove this check
-	if (result->type != &g_bytes) {
+	if (result == NULL) {
+		return NULL;
+	}
+	if (!isinstance_inner(result, &g_bytes)) {
 		error = exc_msg(&g_TypeError, "__str__ did not return a bytestring");
 		return NULL;
+	}
+	if (result->type != self) {
+		BytesObject *arg = (BytesObject*)result;
+		return (Object*)bytes_raw_ex(bytes_data(arg), arg->len, self);
 	}
 	return result;
 }
@@ -859,7 +970,7 @@ BytesObject *bytes_constructor_inner(Object *arg) {
 		return NULL;
 	}
 	gc_root((Object*)args);
-	Object *result = bytes_constructor(NULL, args);
+	Object *result = bytes_constructor((Object*)&g_bytes, args);
 	gc_unroot((Object*)args);
 	return (BytesObject*)result;
 }
@@ -890,7 +1001,7 @@ Object *bool_constructor(Object *self, TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 0 or 1 arguments");
 		return NULL;
 	}
-	Object *method = get_attr_inner(self, "__bool__");
+	Object *method = get_attr_inner(args->data[0], "__bool__");
 	if (method == NULL) {
 		return NULL;
 	}
@@ -898,7 +1009,9 @@ Object *bool_constructor(Object *self, TupleObject *args) {
 	gc_root((Object*)new_args);
 	Object *result = call(method, new_args);
 	gc_unroot((Object*)new_args);
-	// if we're strapped for bugs we can remove this check
+	if (result == NULL) {
+		return NULL;
+	}
 	if (result->type != &g_bool) {
 		error = exc_msg(&g_TypeError, "__bool__ did not return a bool");
 		return NULL;
@@ -912,7 +1025,7 @@ EmptyObject *bool_constructor_inner(Object *obj) {
 		return NULL;
 	}
 	gc_root((Object*)inner_args);
-	Object *result = bool_constructor(NULL, inner_args);
+	Object *result = bool_constructor((Object*)&g_bool, inner_args);
 	gc_unroot((Object*)inner_args);
 	return (EmptyObject*)result;
 }
@@ -922,16 +1035,17 @@ Object *builtin_constructor(Object *self, TupleObject *args) {
 	return NULL;
 }
 
-Object *dict_constructor(Object *self, TupleObject *args) {
+Object *dict_constructor(Object *_self, TupleObject *args) {
+	TypeObject *self = (TypeObject*)_self;
 	if (args->len == 0) {
-		return (Object*)dicto_raw();
+		return (Object*)dicto_raw_ex(self);
 	} else if (args->len == 1) {
-		if (args->data[0]->type != &g_dict) {
+		if (!isinstance_inner(args->data[0], &g_dict)) {
 			error = exc_msg(&g_TypeError, "Expected dict");
 			return NULL;
 		}
 		DictObject *input = (DictObject*)args->data[0];
-		DictObject *result = dicto_raw();
+		DictObject *result = dicto_raw_ex(self);
 		gc_root((Object*)result);
 		bool inner_tracer(void *key, void **val) {
 			return dict_set(&result->core, key, *val, object_hasher, object_equals);
@@ -950,7 +1064,7 @@ Object *dict_constructor(Object *self, TupleObject *args) {
 DictObject *dict_dup_inner(DictObject *self) {
 	TupleObject *args = tuple_raw((Object**)&self, 1);
 	gc_root((Object*)args);
-	Object *result = dict_constructor(NULL, args);
+	Object *result = dict_constructor((Object*)&g_dict, args);
 	gc_unroot((Object*)args);
 	return (DictObject*)result;
 }
@@ -1103,7 +1217,7 @@ Object *get_attr(Object *self, Object *name) {
 		result = type->header_basic.header_dict.header.table->get_attr((Object*)type, name);
 		if (result != NULL) {
 			// maybe could be an interesting source of bugs if we let any object be bound and do property forwards through boundmeth
-			if (result->type == &g_builtin || result->type == &g_closure) {
+			if (isinstance_inner(result, &g_builtin) || isinstance_inner(result, &g_closure)) {
 				result = (Object*)boundmeth_raw(result, self);
 			}
 			return result;
@@ -1172,7 +1286,7 @@ HashResult object_hasher(void *val) {
 			.success = false,
 		};
 	}
-	if (result->type != &g_int) {
+	if (!isinstance_inner(result, &g_int)) {
 		error = exc_msg(&g_TypeError, "__hash__ did not return an int");
 		return (HashResult) {
 			.hash = 0,
@@ -1205,7 +1319,7 @@ EqualityResult object_equals(void *_val1, void *_val2) {
 			.success = false,
 		};
 	}
-	if (result->type != &g_bool) {
+	if (!isinstance_inner(result, &g_bool)) {
 		error = exc_msg(&g_TypeError, "__eq__ did not return a bool");
 		return (EqualityResult) {
 			.equals = false,

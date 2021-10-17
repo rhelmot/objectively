@@ -1,6 +1,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <alloca.h>
+#include <stdarg.h>
 
 #include "object.h"
 #include "gc.h"
@@ -52,7 +53,7 @@ Object *dict_getitem(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_dict) {
+	if (!isinstance_inner(args->data[0], &g_dict)) {
 		error = exc_msg(&g_TypeError, "Expected dict");
 		return NULL;
 	}
@@ -75,7 +76,7 @@ Object *dict_setitem(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 3 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_dict) {
+	if (!isinstance_inner(args->data[0], &g_dict)) {
 		error = exc_msg(&g_TypeError, "Expected dict");
 		return NULL;
 	}
@@ -93,7 +94,7 @@ Object *dict_popitem(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_dict) {
+	if (!isinstance_inner(args->data[0], &g_dict)) {
 		error = exc_msg(&g_TypeError, "Expected dict");
 		return NULL;
 	}
@@ -129,7 +130,7 @@ Object *dict_eq(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_dict || args->data[1]->type != &g_dict) {
+	if (!isinstance_inner(args->data[0], &g_dict )|| !isinstance_inner(args->data[1], &g_dict)) {
 		return (Object*)bool_raw(false);
 	}
 	DictObject *self = (DictObject*)args->data[0];
@@ -175,7 +176,7 @@ Object *dict_bool(TupleObject *args) {
 	if (args->len != 1) {
 		error = exc_msg(&g_TypeError, "Expected 1 argument");
 	}
-	if (args->data[0]->type != &g_dict) {
+	if (!isinstance_inner(args->data[0], &g_dict)) {
 		error = exc_msg(&g_TypeError, "Expected dict");
 		return NULL;
 	}
@@ -183,6 +184,61 @@ Object *dict_bool(TupleObject *args) {
 	return (Object*)bool_raw(self->core.len != 0);
 }
 BUILTIN_METHOD(__bool__, dict_bool, dict);
+
+Object *dict_str(TupleObject *args) {
+	if (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_dict)) {
+		error = exc_msg(&g_TypeError, "Expected dict");
+		return NULL;
+	}
+	DictObject *self = (DictObject*)args->data[0];
+	TupleObject *converted = tuple_raw(NULL, self->core.len);
+	if (converted == NULL) {
+		return NULL;
+	}
+	gc_root((Object*)converted);
+	size_t i = 0;
+	bool tracer(void *_key, void **_val) {
+		Object *key = (Object*)_key;
+		Object *val = (Object*)*_val;
+		converted->data[i] = format_inner("%s: %s", key, val);
+		if (converted->data[i] == NULL) {
+			return false;
+		}
+		i++;
+		return true;
+	}
+	if (!dict_trace(&self->core, tracer)) {
+		gc_unroot((Object*)converted);
+		return NULL;
+	}
+	TupleObject *inner_args = tuple_raw(NULL, 2);
+	if (inner_args == NULL) {
+		gc_unroot((Object*)converted);
+		return NULL;
+	}
+	inner_args->data[0] = (Object*)bytes_unowned_raw(", ", 2, NULL);
+	if (inner_args->data[0] == NULL) {
+		gc_unroot((Object*)converted);
+		return NULL;
+	}
+	inner_args->data[1] = (Object*)converted;
+	gc_unroot((Object*)converted);
+	gc_root((Object*)inner_args);
+	Object *joined_str = bytes_join(inner_args);
+	gc_unroot((Object*)inner_args);
+	if (joined_str == NULL) {
+		return NULL;
+	}
+	gc_root((Object*)joined_str);
+	Object *result = format_inner("{%s}", joined_str);
+	gc_unroot((Object*)joined_str);
+	return result;
+}
+BUILTIN_METHOD(__str__, dict_str, dict);
 
 /////////////////////////////////////
 /// bytes methods
@@ -193,7 +249,7 @@ Object *bytes_eq(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_bytes || args->data[1]->type != &g_bytes) {
+	if (!isinstance_inner(args->data[0], &g_bytes )|| !isinstance_inner(args->data[1], &g_bytes)) {
 		return (Object*)bool_raw(false);
 	}
 
@@ -212,7 +268,7 @@ Object *bytes_hash(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 1 argument");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_bytes) {
+	if (!isinstance_inner(args->data[0], &g_bytes)) {
 		error = exc_msg(&g_TypeError, "Expected bytes");
 		return NULL;
 	}
@@ -233,42 +289,42 @@ Object *bytes_getitem(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_bytes) {
+	if (!isinstance_inner(args->data[0], &g_bytes)) {
 		error = exc_msg(&g_TypeError, "Expected bytes");
 		return NULL;
 	}
 	BytesObject *self = (BytesObject*)args->data[0];
-	if (args->data[1]->type == &g_int) {
+	if (isinstance_inner(args->data[1], &g_int)) {
 		size_t index = convert_index(self->len, ((IntObject*)args->data[1])->value);
 		if (index >= self->len) {
 			error = exc_arg(&g_IndexError, args->data[1]);
 			return NULL;
 		}
-		return (Object*)int_raw(bytes_data(self)[index]);
-	} else if (args->data[1]->type == &g_slice) {
+		return (Object*)int_raw((unsigned char)bytes_data(self)[index]);
+	} else if (isinstance_inner(args->data[1], &g_slice)) {
 		SliceObject *arg = (SliceObject*)args->data[1];
 		size_t start, end;
-		if (arg->start->type == &g_int) {
+		if (isinstance_inner(arg->start, &g_int)) {
 			start = convert_index(self->len, ((IntObject*)arg->start)->value);
-		} else if (arg->start->type == &g_nonetype) {
+		} else if (isinstance_inner(arg->start, &g_nonetype)) {
 			start = 0;
 		} else {
 			error = exc_msg(&g_TypeError, "Expected int or nonetype");
 			return NULL;
 		}
-		if (arg->end->type == &g_int) {
+		if (isinstance_inner(arg->end, &g_int)) {
 			end = convert_index(self->len, ((IntObject*)arg->end)->value);
-		} else if (arg->start->type == &g_nonetype) {
+		} else if (isinstance_inner(arg->end, &g_nonetype)) {
 			end = self->len;
 		} else {
 			error = exc_msg(&g_TypeError, "Expected int or nonetype");
 			return NULL;
 		}
-		if (start >= self->len || end > self->len || end < start) {
+		if (start > self->len || end > self->len || end < start) {
 			error = exc_arg(&g_IndexError, args->data[1]);
 			return NULL;
 		}
-		return (Object*)bytes_unowned_raw(bytes_data(self) + start, end - start, (Object*)self);
+		return (Object*)bytes_unowned_raw_ex(bytes_data(self) + start, end - start, (Object*)self, self->header.type);
 	} else {
 		error = exc_msg(&g_TypeError, "Expected int or slice");
 		return NULL;
@@ -281,7 +337,7 @@ Object *bytes_bool(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 1 argument");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_bytes) {
+	if (!isinstance_inner(args->data[0], &g_bytes)) {
 		error = exc_msg(&g_TypeError, "Expected bytes");
 		return NULL;
 	}
@@ -295,13 +351,127 @@ Object *bytes_str(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 1 argument");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_bytes) {
+	if (!isinstance_inner(args->data[0], &g_bytes)) {
 		error = exc_msg(&g_TypeError, "Expected bytes");
 		return NULL;
 	}
 	return args->data[0];
 }
 BUILTIN_METHOD(__str__, bytes_str, bytes);
+
+Object *bytes_add(TupleObject *args) {
+	if (args->len != 2) {
+		error = exc_msg(&g_TypeError, "Expected 2 arguments");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_bytes )|| !isinstance_inner(args->data[1], &g_bytes)) {
+		error = exc_msg(&g_TypeError, "Expected bytes");
+		return NULL;
+	}
+	BytesObject *self = (BytesObject*)args->data[0];
+	BytesObject *other = (BytesObject*)args->data[1];
+	BytesObject *result = bytes_raw_ex(NULL, self->len + other->len, self->header.type);
+	if (result == NULL) {
+		return NULL;
+	}
+	memcpy((char*)bytes_data(result), bytes_data(self), self->len);
+	memcpy((char*)bytes_data(result) + self->len, bytes_data(other), other->len);
+	return (Object*)result;
+}
+BUILTIN_METHOD(__add__, bytes_add, bytes);
+
+Object *bytes_mul(TupleObject *args) {
+	if (args->len != 2) {
+		error = exc_msg(&g_TypeError, "Expected 2 arguments");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_bytes)) {
+		error = exc_msg(&g_TypeError, "Expected bytes");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[1], &g_int)) {
+		error = exc_msg(&g_TypeError, "Expected int");
+		return NULL;
+	}
+	BytesObject *self = (BytesObject*)args->data[0];
+	size_t times = (size_t)((IntObject*)args->data[1])->value;
+	size_t new_len = times * self->len;
+	if (times != 0 && new_len / times != self->len) {
+		error = exc_msg(&g_ValueError, "Integer overflow");
+		return NULL;
+	}
+	BytesObject *result = bytes_raw_ex(NULL, new_len, self->header.type);
+	if (result == NULL) {
+		return NULL;
+	}
+	for (size_t i = 0; i < times; i++) {
+		memcpy((char*)bytes_data(result) + i * self->len, bytes_data(self), self->len);
+	}
+	return (Object*)result;
+}
+
+Object *bytes_join(TupleObject *args) {
+	if (args->len != 2) {
+		error = exc_msg(&g_TypeError, "Expected 2 arguments");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_bytes)) {
+		error = exc_msg(&g_TypeError, "Expected bytes");
+		return NULL;
+	}
+	BytesObject *self = (BytesObject*)args->data[0];
+	Object **to_join;
+	size_t join_count;
+	if (isinstance_inner(args->data[1], &g_tuple)) {
+		to_join = ((TupleObject*)args->data[1])->data;
+		join_count = ((TupleObject*)args->data[1])->len;
+	} else if (isinstance_inner(args->data[1], &g_list)) {
+		to_join = ((ListObject*)args->data[1])->data;
+		join_count = ((ListObject*)args->data[1])->len;
+	} else {
+		error = exc_msg(&g_TypeError, "Expected list or tuple");
+		return NULL;
+	}
+
+	size_t total_size = 0;
+	for (size_t i = 0; i < join_count; i++) {
+		if (i != 0) {
+			total_size += self->len;
+			if (total_size < self->len) {
+				error = exc_msg(&g_ValueError, "Integer overflow");
+				return NULL;
+			}
+		}
+		if (!isinstance_inner(to_join[i], &g_bytes)) {
+			error = exc_msg(&g_TypeError, "Expected bytes");
+			return NULL;
+		}
+		BytesObject *arg = (BytesObject*)to_join[i];
+		total_size += arg->len;
+		if (total_size < arg->len) {
+			error = exc_msg(&g_ValueError, "Integer overflow");
+			return NULL;
+		}
+	}
+
+	BytesObject *result = bytes_raw_ex(NULL, total_size, self->header.type);
+	if (result == NULL) {
+		return NULL;
+	}
+	total_size = 0;
+	for (size_t i = 0; i < join_count; i++) {
+		if (i != 0) {
+			memcpy((char*)bytes_data(result) + total_size, bytes_data(self), self->len);
+			total_size += self->len;
+		}
+		BytesObject *arg = (BytesObject*)to_join[i];
+		memcpy((char*)bytes_data(result) + total_size, bytes_data(arg), arg->len);
+		total_size += arg->len;
+	}
+
+	return (Object*)result;
+}
+BUILTIN_METHOD(join, bytes_join, bytes);
 
 /////////////////////////////////////
 /// tuple methods
@@ -312,7 +482,7 @@ Object *tuple_hash(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 1 argument");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_tuple) {
+	if (!isinstance_inner(args->data[0], &g_tuple)) {
 		error = exc_msg(&g_TypeError, "Expected tuple");
 		return NULL;
 	}
@@ -335,7 +505,7 @@ Object *tuple_eq(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_tuple || args->data[1]->type != &g_tuple) {
+	if (!isinstance_inner(args->data[0], &g_tuple )|| !isinstance_inner(args->data[1], &g_tuple)) {
 		return (Object*)bool_raw(false);
 	}
 	TupleObject *self = (TupleObject*)args->data[0];
@@ -359,42 +529,42 @@ Object *tuple_getitem(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_tuple) {
+	if (!isinstance_inner(args->data[0], &g_tuple)) {
 		error = exc_msg(&g_TypeError, "Expected tuple");
 		return NULL;
 	}
 	TupleObject *self = (TupleObject*)args->data[0];
-	if (args->data[1]->type == &g_int) {
+	if (isinstance_inner(args->data[1], &g_int)) {
 		size_t index = convert_index(self->len, ((IntObject*)args->data[1])->value);
 		if (index >= self->len) {
 			error = exc_arg(&g_IndexError, args->data[1]);
 			return NULL;
 		}
 		return self->data[index];
-	} else if (args->data[1]->type == &g_slice) {
+	} else if (isinstance_inner(args->data[1], &g_slice)) {
 		SliceObject *arg = (SliceObject*)args->data[1];
 		size_t start, end;
-		if (arg->start->type == &g_int) {
+		if (isinstance_inner(arg->start, &g_int)) {
 			start = convert_index(self->len, ((IntObject*)arg->start)->value);
-		} else if (arg->start->type == &g_nonetype) {
+		} else if (isinstance_inner(arg->start, &g_nonetype)) {
 			start = 0;
 		} else {
 			error = exc_msg(&g_TypeError, "Expected int or nonetype");
 			return NULL;
 		}
-		if (arg->end->type == &g_int) {
+		if (isinstance_inner(arg->end, &g_int)) {
 			end = convert_index(self->len, ((IntObject*)arg->end)->value);
-		} else if (arg->start->type == &g_nonetype) {
+		} else if (isinstance_inner(arg->end, &g_nonetype)) {
 			end = self->len;
 		} else {
 			error = exc_msg(&g_TypeError, "Expected int or nonetype");
 			return NULL;
 		}
-		if (start >= self->len || end > self->len || end < start) {
+		if (start > self->len || end > self->len || end < start) {
 			error = exc_arg(&g_IndexError, args->data[1]);
 			return NULL;
 		}
-		return (Object*)tuple_raw(self->data + start, end - start);
+		return (Object*)tuple_raw_ex(self->data + start, end - start, self->header.type);
 	} else {
 		error = exc_msg(&g_TypeError, "Expected int or slice");
 		return NULL;
@@ -407,17 +577,18 @@ Object *tuple_add(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_tuple || args->data[1]->type != &g_tuple) {
-		return (Object*)bool_raw(false);
+	if (!isinstance_inner(args->data[0], &g_tuple )|| !isinstance_inner(args->data[1], &g_tuple)) {
+		error = exc_msg(&g_TypeError, "Expected tuple");
+		return NULL;
 	}
 	TupleObject *self = (TupleObject*)args->data[0];
 	TupleObject *other = (TupleObject*)args->data[1];
 
 	// overflow here should be physically impossible
-	Object **new_data = alloca(sizeof(Object*) * (self->len + other->len));
-	memcpy(new_data, self->data, sizeof(Object*) * self->len);
-	memcpy(new_data + self->len, other->data, sizeof(Object*) * other->len);
-	return (Object*)tuple_raw(new_data, self->len + other->len);
+	TupleObject *result = tuple_raw_ex(NULL, self->len + other->len, self->header.type);
+	memcpy(result->data, self->data, sizeof(Object*) * self->len);
+	memcpy(result->data + self->len, other->data, sizeof(Object*) * other->len);
+	return (Object*)result;
 }
 BUILTIN_METHOD(__add__, tuple_add, tuple);
 
@@ -426,7 +597,7 @@ Object *tuple_bool(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 1 argument");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_tuple) {
+	if (!isinstance_inner(args->data[0], &g_tuple)) {
 		error = exc_msg(&g_TypeError, "Expected tuple");
 		return NULL;
 	}
@@ -434,6 +605,53 @@ Object *tuple_bool(TupleObject *args) {
 	return (Object*)bool_raw(self->len != 0);
 }
 BUILTIN_METHOD(__bool__, tuple_bool, tuple);
+
+Object *tuple_str(TupleObject *args) {
+	if (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_tuple)) {
+		error = exc_msg(&g_TypeError, "Expected tuple");
+		return NULL;
+	}
+	TupleObject *self = (TupleObject*)args->data[0];
+	TupleObject *converted = tuple_raw(NULL, self->len);
+	if (converted == NULL) {
+		return NULL;
+	}
+	gc_root((Object*)converted);
+	for (size_t i = 0; i < self->len; i++) {
+		converted->data[i] = (Object*)bytes_constructor_inner(self->data[i]);
+		if (converted->data[i] == NULL) {
+			gc_unroot((Object*)converted);
+			return NULL;
+		}
+	}
+	TupleObject *inner_args = tuple_raw(NULL, 2);
+	if (inner_args == NULL) {
+		gc_unroot((Object*)converted);
+		return NULL;
+	}
+	inner_args->data[0] = (Object*)bytes_unowned_raw(", ", 2, NULL);
+	if (inner_args->data[0] == NULL) {
+		gc_unroot((Object*)converted);
+		return NULL;
+	}
+	inner_args->data[1] = (Object*)converted;
+	gc_unroot((Object*)converted);
+	gc_root((Object*)inner_args);
+	Object *joined_str = bytes_join(inner_args);
+	gc_unroot((Object*)inner_args);
+	if (joined_str == NULL) {
+		return NULL;
+	}
+	gc_root((Object*)joined_str);
+	Object *result = format_inner("[%s]", joined_str);
+	gc_unroot((Object*)joined_str);
+	return result;
+}
+BUILTIN_METHOD(__str__, tuple_str, tuple);
 
 /////////////////////////////////////
 /// list methods
@@ -446,7 +664,7 @@ Object *list_eq(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_list || args->data[1]->type != &g_list) {
+	if (!isinstance_inner(args->data[0], &g_list )|| !isinstance_inner(args->data[1], &g_list)) {
 		return (Object*)bool_raw(false);
 	}
 	ListObject *self = (ListObject*)args->data[0];
@@ -470,42 +688,42 @@ Object *list_getitem(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_list) {
+	if (!isinstance_inner(args->data[0], &g_list)) {
 		error = exc_msg(&g_TypeError, "Expected list");
 		return NULL;
 	}
 	ListObject *self = (ListObject*)args->data[0];
-	if (args->data[1]->type == &g_int) {
+	if (isinstance_inner(args->data[1], &g_int)) {
 		size_t index = convert_index(self->len, ((IntObject*)args->data[1])->value);
 		if (index >= self->len) {
 			error = exc_arg(&g_IndexError, args->data[1]);
 			return NULL;
 		}
 		return self->data[index];
-	} else if (args->data[1]->type == &g_slice) {
+	} else if (isinstance_inner(args->data[1], &g_slice)) {
 		SliceObject *arg = (SliceObject*)args->data[1];
 		size_t start, end;
-		if (arg->start->type == &g_int) {
+		if (isinstance_inner(arg->start, &g_int)) {
 			start = convert_index(self->len, ((IntObject*)arg->start)->value);
-		} else if (arg->start->type == &g_nonetype) {
+		} else if (isinstance_inner(arg->start, &g_nonetype)) {
 			start = 0;
 		} else {
 			error = exc_msg(&g_TypeError, "Expected int or nonetype");
 			return NULL;
 		}
-		if (arg->end->type == &g_int) {
+		if (isinstance_inner(arg->end, &g_int)) {
 			end = convert_index(self->len, ((IntObject*)arg->end)->value);
-		} else if (arg->start->type == &g_nonetype) {
+		} else if (isinstance_inner(arg->end, &g_nonetype)) {
 			end = self->len;
 		} else {
 			error = exc_msg(&g_TypeError, "Expected int or nonetype");
 			return NULL;
 		}
-		if (start >= self->len || end > self->len || end < start) {
+		if (start > self->len || end > self->len || end < start) {
 			error = exc_arg(&g_IndexError, args->data[1]);
 			return NULL;
 		}
-		return (Object*)list_raw(self->data + start, end - start);
+		return (Object*)list_raw_ex(self->data + start, end - start, self->header.type);
 	} else {
 		error = exc_msg(&g_TypeError, "Expected int or slice");
 		return NULL;
@@ -518,12 +736,12 @@ Object *list_setitem(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 3 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_list) {
+	if (!isinstance_inner(args->data[0], &g_list)) {
 		error = exc_msg(&g_TypeError, "Expected list");
 		return NULL;
 	}
 	ListObject *self = (ListObject*)args->data[0];
-	if (args->data[1]->type == &g_int) {
+	if (isinstance_inner(args->data[1], &g_int)) {
 		size_t index = convert_index(self->len, ((IntObject*)args->data[1])->value);
 		if (index >= self->len) {
 			error = exc_arg(&g_IndexError, args->data[1]);
@@ -544,13 +762,13 @@ Object *list_push(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 or 3 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_list) {
+	if (!isinstance_inner(args->data[0], &g_list)) {
 		error = exc_msg(&g_TypeError, "Expected list");
 		return NULL;
 	}
 	ListObject *self = (ListObject*)args->data[0];
 	size_t index;
-	if (args->len == 3 && args->data[2]->type == &g_int) {
+	if (args->len == 3 && isinstance_inner(args->data[2], &g_int)) {
 		index = convert_index(self->len, ((IntObject*)args->data[1])->value);
 		if (index > self->len) {
 			error = exc_arg(&g_IndexError, args->data[1]);
@@ -597,13 +815,13 @@ Object *list_pop(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 1 or 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_list) {
+	if (!isinstance_inner(args->data[0], &g_list)) {
 		error = exc_msg(&g_TypeError, "Expected list");
 		return NULL;
 	}
 	ListObject *self = (ListObject*)args->data[0];
 	size_t index;
-	if (args->len == 2 && args->data[1]->type == &g_int) {
+	if (args->len == 2 && isinstance_inner(args->data[1], &g_int)) {
 		index = convert_index(self->len, ((IntObject*)args->data[1])->value);
 		if (index >= self->len) {
 			error = exc_arg(&g_IndexError, args->data[1]);
@@ -648,7 +866,7 @@ Object *list_bool(TupleObject *args) {
 	if (args->len != 1) {
 		error = exc_msg(&g_TypeError, "Expected 1 argument");
 	}
-	if (args->data[0]->type != &g_list) {
+	if (!isinstance_inner(args->data[0], &g_list)) {
 		error = exc_msg(&g_TypeError, "Expected list");
 		return NULL;
 	}
@@ -656,6 +874,53 @@ Object *list_bool(TupleObject *args) {
 	return (Object*)bool_raw(self->len != 0);
 }
 BUILTIN_METHOD(__bool__, list_bool, list);
+
+Object *list_str(TupleObject *args) {
+	if (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_list)) {
+		error = exc_msg(&g_TypeError, "Expected list");
+		return NULL;
+	}
+	ListObject *self = (ListObject*)args->data[0];
+	TupleObject *converted = tuple_raw(NULL, self->len);
+	if (converted == NULL) {
+		return NULL;
+	}
+	gc_root((Object*)converted);
+	for (size_t i = 0; i < self->len; i++) {
+		converted->data[i] = (Object*)bytes_constructor_inner(self->data[i]);
+		if (converted->data[i] == NULL) {
+			gc_unroot((Object*)converted);
+			return NULL;
+		}
+	}
+	TupleObject *inner_args = tuple_raw(NULL, 2);
+	if (inner_args == NULL) {
+		gc_unroot((Object*)converted);
+		return NULL;
+	}
+	inner_args->data[0] = (Object*)bytes_unowned_raw(", ", 2, NULL);
+	if (inner_args->data[0] == NULL) {
+		gc_unroot((Object*)converted);
+		return NULL;
+	}
+	inner_args->data[1] = (Object*)converted;
+	gc_unroot((Object*)converted);
+	gc_root((Object*)inner_args);
+	Object *joined_str = bytes_join(inner_args);
+	gc_unroot((Object*)inner_args);
+	if (joined_str == NULL) {
+		return NULL;
+	}
+	gc_root((Object*)joined_str);
+	Object *result = format_inner("list([%s])", joined_str);
+	gc_unroot((Object*)joined_str);
+	return result;
+}
+BUILTIN_METHOD(__str__, list_str, list);
 
 /////////////////////////////////////
 /// int methods
@@ -666,11 +931,11 @@ Object *int_add(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_int || args->data[1]->type != &g_int) {
+	if (!isinstance_inner(args->data[0], &g_int )|| !isinstance_inner(args->data[1], &g_int)) {
 		error = exc_msg(&g_TypeError, "Expected int");
 		return NULL;
 	}
-	return (Object*)int_raw(((IntObject*)args->data[0])->value + ((IntObject*)args->data[1])->value);
+	return (Object*)int_raw_ex(((IntObject*)args->data[0])->value + ((IntObject*)args->data[1])->value, args->data[0]->type);
 }
 BUILTIN_METHOD(__add__, int_add, int);
 
@@ -679,11 +944,11 @@ Object *int_sub(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_int || args->data[1]->type != &g_int) {
+	if (!isinstance_inner(args->data[0], &g_int )|| !isinstance_inner(args->data[1], &g_int)) {
 		error = exc_msg(&g_TypeError, "Expected int");
 		return NULL;
 	}
-	return (Object*)int_raw(((IntObject*)args->data[0])->value - ((IntObject*)args->data[1])->value);
+	return (Object*)int_raw_ex(((IntObject*)args->data[0])->value - ((IntObject*)args->data[1])->value, args->data[0]->type);
 }
 BUILTIN_METHOD(__sub__, int_sub, int);
 
@@ -692,11 +957,11 @@ Object *int_mul(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_int || args->data[1]->type != &g_int) {
+	if (!isinstance_inner(args->data[0], &g_int )|| !isinstance_inner(args->data[1], &g_int)) {
 		error = exc_msg(&g_TypeError, "Expected int");
 		return NULL;
 	}
-	return (Object*)int_raw(((IntObject*)args->data[0])->value * ((IntObject*)args->data[1])->value);
+	return (Object*)int_raw_ex(((IntObject*)args->data[0])->value * ((IntObject*)args->data[1])->value, args->data[0]->type);
 }
 BUILTIN_METHOD(__mul__, int_mul, int);
 
@@ -705,7 +970,7 @@ Object *int_div(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_int || args->data[1]->type != &g_int) {
+	if (!isinstance_inner(args->data[0], &g_int )|| !isinstance_inner(args->data[1], &g_int)) {
 		error = exc_msg(&g_TypeError, "Expected int");
 		return NULL;
 	}
@@ -714,7 +979,7 @@ Object *int_div(TupleObject *args) {
 		error = exc_msg(&g_ZeroDivisionError, "Division by zero");
 		return NULL;
 	}
-	return (Object*)int_raw(((IntObject*)args->data[0])->value / divisor);
+	return (Object*)int_raw_ex(((IntObject*)args->data[0])->value / divisor, args->data[0]->type);
 }
 BUILTIN_METHOD(__div__, int_div, int);
 
@@ -723,7 +988,7 @@ Object *int_mod(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_int || args->data[1]->type != &g_int) {
+	if (!isinstance_inner(args->data[0], &g_int )|| !isinstance_inner(args->data[1], &g_int)) {
 		error = exc_msg(&g_TypeError, "Expected int");
 		return NULL;
 	}
@@ -732,7 +997,7 @@ Object *int_mod(TupleObject *args) {
 		error = exc_msg(&g_ZeroDivisionError, "Division by zero");
 		return NULL;
 	}
-	return (Object*)int_raw(((IntObject*)args->data[0])->value % divisor);
+	return (Object*)int_raw_ex(((IntObject*)args->data[0])->value % divisor, args->data[0]->type);
 }
 BUILTIN_METHOD(__mod__, int_mod, int);
 
@@ -741,11 +1006,11 @@ Object *int_and(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_int || args->data[1]->type != &g_int) {
+	if (!isinstance_inner(args->data[0], &g_int )|| !isinstance_inner(args->data[1], &g_int)) {
 		error = exc_msg(&g_TypeError, "Expected int");
 		return NULL;
 	}
-	return (Object*)int_raw(((IntObject*)args->data[0])->value & ((IntObject*)args->data[1])->value);
+	return (Object*)int_raw_ex(((IntObject*)args->data[0])->value & ((IntObject*)args->data[1])->value, args->data[0]->type);
 }
 BUILTIN_METHOD(__and__, int_and, int);
 
@@ -754,11 +1019,11 @@ Object *int_or(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_int || args->data[1]->type != &g_int) {
+	if (!isinstance_inner(args->data[0], &g_int )|| !isinstance_inner(args->data[1], &g_int)) {
 		error = exc_msg(&g_TypeError, "Expected int");
 		return NULL;
 	}
-	return (Object*)int_raw(((IntObject*)args->data[0])->value | ((IntObject*)args->data[1])->value);
+	return (Object*)int_raw_ex(((IntObject*)args->data[0])->value | ((IntObject*)args->data[1])->value, args->data[0]->type);
 }
 BUILTIN_METHOD(__or__, int_or, int);
 
@@ -767,33 +1032,72 @@ Object *int_xor(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_int || args->data[1]->type != &g_int) {
+	if (!isinstance_inner(args->data[0], &g_int )|| !isinstance_inner(args->data[1], &g_int)) {
 		error = exc_msg(&g_TypeError, "Expected int");
 		return NULL;
 	}
-	return (Object*)int_raw(((IntObject*)args->data[0])->value ^ ((IntObject*)args->data[1])->value);
+	return (Object*)int_raw_ex(((IntObject*)args->data[0])->value ^ ((IntObject*)args->data[1])->value, args->data[0]->type);
 }
 BUILTIN_METHOD(__xor__, int_xor, int);
 
-Object *int_not(TupleObject *args) {
+Object *int_shl(TupleObject *args) {
+	if (args->len != 2) {
+		error = exc_msg(&g_TypeError, "Expected 2 arguments");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_int )|| !isinstance_inner(args->data[1], &g_int)) {
+		error = exc_msg(&g_TypeError, "Expected int");
+		return NULL;
+	}
+	return (Object*)int_raw_ex(((IntObject*)args->data[0])->value << ((IntObject*)args->data[1])->value, args->data[0]->type);
+}
+BUILTIN_METHOD(__shl__, int_shl, int);
+
+Object *int_shr(TupleObject *args) {
+	if (args->len != 2) {
+		error = exc_msg(&g_TypeError, "Expected 2 arguments");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_int )|| !isinstance_inner(args->data[1], &g_int)) {
+		error = exc_msg(&g_TypeError, "Expected int");
+		return NULL;
+	}
+	return (Object*)int_raw_ex(((IntObject*)args->data[0])->value >> ((IntObject*)args->data[1])->value, args->data[0]->type);
+}
+BUILTIN_METHOD(__shr__, int_shr, int);
+
+Object *int_inv(TupleObject *args) {
 	if (args->len != 1) {
 		error = exc_msg(&g_TypeError, "Expected 1 argument");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_int) {
+	if (!isinstance_inner(args->data[0], &g_int)) {
 		error = exc_msg(&g_TypeError, "Expected int");
 		return NULL;
 	}
-	return (Object*)int_raw(~((IntObject*)args->data[0])->value);
+	return (Object*)int_raw_ex(~((IntObject*)args->data[0])->value, args->data[0]->type);
 }
-BUILTIN_METHOD(__invert__, int_not, int);
+BUILTIN_METHOD(__inv__, int_inv, int);
+
+Object *int_neg(TupleObject *args) {
+	if (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_int)) {
+		error = exc_msg(&g_TypeError, "Expected int");
+		return NULL;
+	}
+	return (Object*)int_raw_ex(-((IntObject*)args->data[0])->value, args->data[0]->type);
+}
+BUILTIN_METHOD(__neg__, int_neg, int);
 
 Object *int_eq(TupleObject *args) {
 	if (args->len != 2) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_int || args->data[1]->type != &g_int) {
+	if (!isinstance_inner(args->data[0], &g_int )|| !isinstance_inner(args->data[1], &g_int)) {
 		return (Object*)bool_raw(false);
 	}
 	return (Object*)bool_raw(((IntObject*)args->data[0])->value == ((IntObject*)args->data[1])->value);
@@ -805,7 +1109,7 @@ Object *int_hash(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 1 argument");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_int) {
+	if (!isinstance_inner(args->data[0], &g_int)) {
 		error = exc_msg(&g_TypeError, "Expected int");
 		return NULL;
 	}
@@ -818,7 +1122,7 @@ Object *int_gt(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_int || args->data[1]->type != &g_int) {
+	if (!isinstance_inner(args->data[0], &g_int )|| !isinstance_inner(args->data[1], &g_int)) {
 		return (Object*)bool_raw(false);
 	}
 	return (Object*)bool_raw(((IntObject*)args->data[0])->value > ((IntObject*)args->data[1])->value);
@@ -830,7 +1134,7 @@ Object *int_lt(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_int || args->data[1]->type != &g_int) {
+	if (!isinstance_inner(args->data[0], &g_int )|| !isinstance_inner(args->data[1], &g_int)) {
 		return (Object*)bool_raw(false);
 	}
 	return (Object*)bool_raw(((IntObject*)args->data[0])->value < ((IntObject*)args->data[1])->value);
@@ -842,7 +1146,7 @@ Object *int_ge(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_int || args->data[1]->type != &g_int) {
+	if (!isinstance_inner(args->data[0], &g_int )|| !isinstance_inner(args->data[1], &g_int)) {
 		return (Object*)bool_raw(false);
 	}
 	return (Object*)bool_raw(((IntObject*)args->data[0])->value >= ((IntObject*)args->data[1])->value);
@@ -854,7 +1158,7 @@ Object *int_le(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_int || args->data[1]->type != &g_int) {
+	if (!isinstance_inner(args->data[0], &g_int )|| !isinstance_inner(args->data[1], &g_int)) {
 		return (Object*)bool_raw(false);
 	}
 	return (Object*)bool_raw(((IntObject*)args->data[0])->value <= ((IntObject*)args->data[1])->value);
@@ -865,7 +1169,7 @@ Object *int_bool(TupleObject *args) {
 	if (args->len != 1) {
 		error = exc_msg(&g_TypeError, "Expected 1 argument");
 	}
-	if (args->data[0]->type != &g_int) {
+	if (!isinstance_inner(args->data[0], &g_int)) {
 		error = exc_msg(&g_TypeError, "Expected int");
 		return NULL;
 	}
@@ -873,6 +1177,22 @@ Object *int_bool(TupleObject *args) {
 	return (Object*)bool_raw(self->value != 0);
 }
 BUILTIN_METHOD(__bool__, int_bool, int);
+
+Object *int_str(TupleObject *args) {
+	if (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_int)) {
+		error = exc_msg(&g_TypeError, "Expected int");
+		return NULL;
+	}
+	IntObject *self = (IntObject*)args->data[0];
+	char the_str[100];
+	snprintf(the_str, 100, "%ld", self->value);
+	return (Object*)bytes_raw(the_str, strlen(the_str));
+}
+BUILTIN_METHOD(__str__, int_str, int);
 
 /////////////////////////////////////
 /// bool methods
@@ -883,38 +1203,53 @@ Object *bool_not(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 1 argument");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_bool) {
+	if (!isinstance_inner(args->data[0], &g_bool)) {
 		error = exc_msg(&g_TypeError, "Expected bool");
 		return NULL;
 	}
-	return (Object*)bool_raw(!((IntObject*)args->data[0])->value);
+	return args->data[0] == (Object*)&g_true ? (Object*)&g_false : (Object*)&g_true;
 }
-BUILTIN_METHOD(__not__, bool_not, int);
+BUILTIN_METHOD(__not__, bool_not, bool);
 
 Object *bool_hash(TupleObject *args) {
 	if (args->len != 1) {
 		error = exc_msg(&g_TypeError, "Expected 1 argument");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_bool) {
+	if (!isinstance_inner(args->data[0], &g_bool)) {
 		error = exc_msg(&g_TypeError, "Expected bool");
 		return NULL;
 	}
 	return (EmptyObject*)args->data[0] == &g_true ? (Object*)int_raw(1) : (Object*)int_raw(0);
 }
+BUILTIN_METHOD(__hash__, bool_hash, bool);
 
 Object *bool_bool(TupleObject *args) {
 	if (args->len != 1) {
 		error = exc_msg(&g_TypeError, "Expected 1 argument");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_bool) {
+	if (!isinstance_inner(args->data[0], &g_bool)) {
 		error = exc_msg(&g_TypeError, "Expected bool");
 		return NULL;
 	}
 	return args->data[0];
 }
 BUILTIN_METHOD(__bool__, bool_bool, bool);
+
+Object *bool_str(TupleObject *args) {
+	if (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_bool)) {
+		error = exc_msg(&g_TypeError, "Expected bool");
+		return NULL;
+	}
+	const char *the_str = args->data[0] == (Object*)&g_true ? "True" : "False";
+	return (Object*)bytes_unowned_raw(the_str, strlen(the_str), NULL);
+}
+BUILTIN_METHOD(__str__, bool_str, bool);
 
 /////////////////////////////////////
 /// float methods
@@ -925,11 +1260,11 @@ Object *float_add(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_float || args->data[1]->type != &g_float) {
+	if (!isinstance_inner(args->data[0], &g_float )|| !isinstance_inner(args->data[1], &g_float)) {
 		error = exc_msg(&g_TypeError, "Expected float");
 		return NULL;
 	}
-	return (Object*)float_raw(((FloatObject*)args->data[0])->value + ((FloatObject*)args->data[1])->value);
+	return (Object*)float_raw_ex(((FloatObject*)args->data[0])->value + ((FloatObject*)args->data[1])->value, args->data[0]->type);
 }
 BUILTIN_METHOD(__add__, float_add, float);
 
@@ -938,11 +1273,11 @@ Object *float_sub(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_float || args->data[1]->type != &g_float) {
+	if (!isinstance_inner(args->data[0], &g_float )|| !isinstance_inner(args->data[1], &g_float)) {
 		error = exc_msg(&g_TypeError, "Expected float");
 		return NULL;
 	}
-	return (Object*)float_raw(((FloatObject*)args->data[0])->value - ((FloatObject*)args->data[1])->value);
+	return (Object*)float_raw_ex(((FloatObject*)args->data[0])->value - ((FloatObject*)args->data[1])->value, args->data[0]->type);
 }
 BUILTIN_METHOD(__sub__, float_sub, float);
 
@@ -951,11 +1286,11 @@ Object *float_mul(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_float || args->data[1]->type != &g_float) {
+	if (!isinstance_inner(args->data[0], &g_float )|| !isinstance_inner(args->data[1], &g_float)) {
 		error = exc_msg(&g_TypeError, "Expected float");
 		return NULL;
 	}
-	return (Object*)float_raw(((FloatObject*)args->data[0])->value * ((FloatObject*)args->data[1])->value);
+	return (Object*)float_raw_ex(((FloatObject*)args->data[0])->value * ((FloatObject*)args->data[1])->value, args->data[0]->type);
 }
 BUILTIN_METHOD(__mul__, float_mul, float);
 
@@ -964,7 +1299,7 @@ Object *float_div(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_float || args->data[1]->type != &g_float) {
+	if (!isinstance_inner(args->data[0], &g_float )|| !isinstance_inner(args->data[1], &g_float)) {
 		error = exc_msg(&g_TypeError, "Expected float");
 		return NULL;
 	}
@@ -973,16 +1308,29 @@ Object *float_div(TupleObject *args) {
 		error = exc_msg(&g_ZeroDivisionError, "Division by zero");
 		return NULL;
 	}
-	return (Object*)float_raw(((FloatObject*)args->data[0])->value / divisor);
+	return (Object*)float_raw_ex(((FloatObject*)args->data[0])->value / divisor, args->data[0]->type);
 }
 BUILTIN_METHOD(__div__, float_div, float);
+
+Object *float_neg(TupleObject *args) {
+	if (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_float)) {
+		error = exc_msg(&g_TypeError, "Expected float");
+		return NULL;
+	}
+	return (Object*)float_raw_ex(-((FloatObject*)args->data[0])->value, args->data[0]->type);
+}
+BUILTIN_METHOD(__neg__, float_neg, float);
 
 Object *float_eq(TupleObject *args) {
 	if (args->len != 2) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_float || args->data[1]->type != &g_float) {
+	if (!isinstance_inner(args->data[0], &g_float )|| !isinstance_inner(args->data[1], &g_float)) {
 		error = exc_msg(&g_TypeError, "Expected float");
 		return NULL;
 	}
@@ -995,12 +1343,16 @@ Object *float_hash(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 1 argument");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_float) {
+	if (!isinstance_inner(args->data[0], &g_float)) {
 		error = exc_msg(&g_TypeError, "Expected float");
 		return NULL;
 	}
 	// return int(self) for integral floats?
-	return (Object*)float_raw(*(int64_t*)&((FloatObject*)args->data[0])->value);
+	union {
+		double *d;
+		int64_t *i;
+	} x = { .d = &((FloatObject*)args->data[0])->value };
+	return (Object*)int_raw(*x.i);
 }
 
 Object *float_gt(TupleObject *args) {
@@ -1008,7 +1360,7 @@ Object *float_gt(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_float || args->data[1]->type != &g_float) {
+	if (!isinstance_inner(args->data[0], &g_float )|| !isinstance_inner(args->data[1], &g_float)) {
 		return (Object*)bool_raw(false);
 	}
 	return (Object*)bool_raw(((FloatObject*)args->data[0])->value > ((FloatObject*)args->data[1])->value);
@@ -1020,7 +1372,7 @@ Object *float_lt(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_float || args->data[1]->type != &g_float) {
+	if (!isinstance_inner(args->data[0], &g_float )|| !isinstance_inner(args->data[1], &g_float)) {
 		return (Object*)bool_raw(false);
 	}
 	return (Object*)bool_raw(((FloatObject*)args->data[0])->value < ((FloatObject*)args->data[1])->value);
@@ -1032,7 +1384,7 @@ Object *float_ge(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_float || args->data[1]->type != &g_float) {
+	if (!isinstance_inner(args->data[0], &g_float )|| !isinstance_inner(args->data[1], &g_float)) {
 		return (Object*)bool_raw(false);
 	}
 	return (Object*)bool_raw(((FloatObject*)args->data[0])->value >= ((FloatObject*)args->data[1])->value);
@@ -1044,7 +1396,7 @@ Object *float_le(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (args->data[0]->type != &g_float || args->data[1]->type != &g_float) {
+	if (!isinstance_inner(args->data[0], &g_float )|| !isinstance_inner(args->data[1], &g_float)) {
 		return (Object*)bool_raw(false);
 	}
 	return (Object*)bool_raw(((FloatObject*)args->data[0])->value <= ((FloatObject*)args->data[1])->value);
@@ -1052,7 +1404,7 @@ Object *float_le(TupleObject *args) {
 BUILTIN_METHOD(__le__, float_le, float);
 
 Object *float_bool(TupleObject *args) {
-	if (args->len != 1 || args->data[0]->type != &g_float) {
+	if (args->len != 1 || !isinstance_inner(args->data[0], &g_float)) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
@@ -1060,6 +1412,22 @@ Object *float_bool(TupleObject *args) {
 	return (Object*)bool_raw(self->value != 0.);
 }
 BUILTIN_METHOD(__bool__, float_bool, float);
+
+Object *float_str(TupleObject *args) {
+	if (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_float)) {
+		error = exc_msg(&g_TypeError, "Expected float");
+		return NULL;
+	}
+	FloatObject *self = (FloatObject*)args->data[0];
+	char the_str[100];
+	snprintf(the_str, 100, "%e", self->value);
+	return (Object*)bytes_raw(the_str, strlen(the_str));
+}
+BUILTIN_METHOD(__str__, float_str, float);
 
 /////////////////////////////////////
 /// object methods
@@ -1128,7 +1496,7 @@ Object *object_bool(TupleObject *args) {
 BUILTIN_METHOD(__bool__, object_bool, object);
 
 Object *object_not(TupleObject *args) {
-	if  (args->len != 1) {
+	if (args->len != 1) {
 		error = exc_msg(&g_TypeError, "Expected 1 argument");
 		return NULL;
 	}
@@ -1137,8 +1505,88 @@ Object *object_not(TupleObject *args) {
 }
 BUILTIN_METHOD(__not__, object_not, object);
 
+Object *object_str(TupleObject *args) {
+	if (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	return format_inner("<object %s>", int_raw((int64_t)args->data[0]));
+}
+BUILTIN_METHOD(__str__, object_str, object);
+
+Object *object_repr(TupleObject *args) {
+	if (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	Object *str_method = get_attr_inner(args->data[0], "__str__");
+	if (str_method == NULL) {
+		return NULL;
+	}
+	return call(str_method, args);
+}
+BUILTIN_METHOD(__repr__, object_repr, object);
+
 /////////////////////////////////////
-/// freestanding methods
+/// exception functions
+/////////////////////////////////////
+
+Object *exc_str(TupleObject *args) {
+	if (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_exception)) {
+		error = exc_msg(&g_TypeError, "Expected exception");
+		return NULL;
+	}
+	ExceptionObject *self = (ExceptionObject*)args->data[0];
+	TupleObject *inner_args = tuple_raw((Object*[]){(Object*)self->args}, 1);
+	if (inner_args == NULL) {
+		return NULL;
+	}
+	gc_root((Object*)inner_args);
+	Object *inner_repr = tuple_str(inner_args);
+	gc_unroot((Object*)inner_args);
+	if (inner_repr == NULL) {
+		return NULL;
+	}
+	gc_root((Object*)inner_repr);
+	Object *result = format_inner("Exception%s", inner_repr);
+	gc_unroot((Object*)inner_repr);
+	return result;
+}
+BUILTIN_METHOD(__str__, exc_str, exception);
+
+/////////////////////////////////////
+/// slice functions
+/////////////////////////////////////
+
+Object *slice_str(TupleObject *args) {
+	if (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_slice)) {
+		error = exc_msg(&g_TypeError, "Expected slice");
+		return NULL;
+	}
+	SliceObject *self = (SliceObject*)args->data[0];
+	return format_inner("slice(%s, %s)", self->start, self->end);
+}
+BUILTIN_METHOD(__str__, slice_str, slice);
+
+/////////////////////////////////////
+/// nonetype functions
+/////////////////////////////////////
+
+Object *none_str(TupleObject *args) {
+	return (Object*)bytes_unowned_raw("None", 4, NULL);
+}
+BUILTIN_METHOD(__str__, none_str, nonetype);
+
+/////////////////////////////////////
+/// freestanding functions
 /////////////////////////////////////
 
 Object *builtin_print(TupleObject *args) {
@@ -1146,7 +1594,6 @@ Object *builtin_print(TupleObject *args) {
 		if (i != 0) {
 			putchar(' ');
 		}
-		// TODO null bytes
 		BytesObject *as_str = bytes_constructor_inner(args->data[i]);
 		if (as_str == NULL) {
 			return NULL;
@@ -1157,3 +1604,166 @@ Object *builtin_print(TupleObject *args) {
 	return (Object*)&g_none;
 }
 BUILTIN_FUNCTION(print, builtin_print);
+
+Object *builtin_format(TupleObject *args) {
+	TupleObject *converted_args = tuple_raw(NULL, args->len);
+	if (converted_args == NULL) {
+		return NULL;
+	}
+	for (size_t i = 0; i < args->len; i++) {
+		converted_args->data[i] = (Object*)bytes_constructor_inner(args->data[i]);
+		if (converted_args->data[i] == NULL) {
+			return NULL;
+		}
+	}
+	BytesObject *empty_string = bytes_raw(NULL, 0);
+	if (empty_string == NULL) { return NULL; }
+	TupleObject *inner_args = tuple_raw(NULL, 2);
+	if (inner_args == NULL) { return NULL; }
+	inner_args->data[0] = (Object*)empty_string;
+	inner_args->data[1] = (Object*)converted_args;
+	return bytes_join(inner_args);
+}
+BUILTIN_FUNCTION(format, builtin_format);
+
+Object *format_inner(const char *format, ...) {
+	va_list ap;
+	va_start(ap, format);
+
+	size_t num_fmt = 0;
+	bool in_const = false;
+	for (const char *i = format; *i; i++) {
+		if (*i == '%') {
+			in_const = false;
+			i++;
+			if (*i != '%') {
+				num_fmt++;
+			} else {
+				in_const = true;
+				num_fmt++;
+			}
+		} else {
+			if (!in_const) {
+				in_const = true;
+				num_fmt++;
+			}
+		}
+	}
+	TupleObject *inner_args = tuple_raw(NULL, num_fmt);
+	if (inner_args == NULL) {
+		return NULL;
+	}
+
+	const char *const_start = NULL;
+	size_t idx = 0;
+	const char *i;
+	for (i = format; *i; i++) {
+		if (*i == '%') {
+			if (const_start != NULL) {
+				inner_args->data[idx] = (Object*)bytes_unowned_raw(const_start, i - const_start, NULL);
+				if (inner_args->data[idx] == NULL) {
+					return NULL;
+				}
+				idx++;
+			}
+			const_start = NULL;
+			i++;
+			if (*i != '%') {
+				inner_args->data[idx] = va_arg(ap, Object*);
+				idx++;
+			} else {
+				const_start = i;
+			}
+		} else {
+			if (const_start == NULL) {
+				const_start = i;
+			}
+		}
+	}
+	if (const_start != NULL) {
+		inner_args->data[idx] = (Object*)bytes_unowned_raw(const_start, i - const_start, NULL);
+		if (inner_args->data[idx] == NULL) {
+			return NULL;
+		}
+		idx++;
+	}
+	if (idx != num_fmt) {
+		puts("Something terrible has happened");
+		exit(1);
+	}
+
+	gc_root((Object*)inner_args);
+	Object *result = builtin_format(inner_args);
+	gc_unroot((Object*)inner_args);
+	return result;
+}
+
+Object *builtin_hex(TupleObject *args) {
+	if (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_int)) {
+		error = exc_msg(&g_TypeError, "Expected int");
+		return NULL;
+	}
+	IntObject *self = (IntObject*)args->data[0];
+	char the_str[100];
+	if (self->value != 0) {
+		snprintf(the_str, 100, "%#lx", self->value);
+	} else {
+		strcpy(the_str, "0x0");
+	}
+	return (Object*)bytes_raw(the_str, strlen(the_str));
+}
+BUILTIN_FUNCTION(hex, builtin_hex);
+
+Object *builtin_isinstance(TupleObject *args) {
+	if (args->len != 2) {
+		error = exc_msg(&g_TypeError, "Expected 2 arguments");
+		return NULL;
+	}
+	return isinstance_inner(args->data[0], (TypeObject*)args->data[1]) ? (Object*)&g_true : (Object*)&g_false;
+}
+BUILTIN_FUNCTION(isinstance, builtin_isinstance);
+
+bool isinstance_inner(Object *obj, TypeObject *type) {
+	for (TypeObject *ptype = obj->type; ptype; ptype = ptype->base_class) {
+		if (type == ptype) {
+			return true;
+		}
+	}
+	return false;
+}
+
+Object *builtin_chr(TupleObject *args) {
+	if (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_int)) {
+		error = exc_msg(&g_TypeError, "Expected int");
+		return NULL;
+	}
+	IntObject *self = (IntObject*)args->data[0];
+	if (self->value < 0 || self->value > 255) {
+		error = exc_msg(&g_ValueError, "value out of range for chr()");
+	}
+	char ch = (char)self->value;
+	return (Object*)bytes_raw(&ch, 1);
+}
+BUILTIN_FUNCTION(chr, builtin_chr);
+
+Object *builtin_input(TupleObject *args) {
+	if (args->len != 0) {
+		error = exc_msg(&g_TypeError, "Expected 0 arguments");
+		return NULL;
+	}
+	char buf[1024];
+	if (!fgets(buf, 1024, stdin)) {
+		error = exc_msg(&g_RuntimeError, "Could not read from stdin");
+		return NULL;
+	}
+	return (Object*)bytes_raw(buf, strlen(buf));
+}
+BUILTIN_FUNCTION(input, builtin_input);

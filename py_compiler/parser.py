@@ -9,6 +9,7 @@ OPCODES = dict(
 	ST_SWAP = 1,
 	ST_POP = 2,
 	ST_DUP = 3,
+        ST_DUP2 = 4,
 	LIT_BYTES = 10,
 	LIT_INT = 11,
 	LIT_FLOAT = 12,
@@ -87,8 +88,6 @@ class Linkable:
         if relocations is None:
             relocations = {}
         self.bytecode = [bytecode]
-        if any(type(x) is Linkable for x in self.bytecode):
-            breakpoint()
         self.symbols = symbols
         self.relocations = relocations
 
@@ -96,7 +95,7 @@ class Linkable:
         return sum(len(b) for b in self.bytecode)
 
     def relocated_symbols(self, offset):
-        return {symbol: addr + offset for addr, symbol in self.symbols.items()}
+        return {symbol: addr + offset for symbol, addr in self.symbols.items()}
 
     def relocated_relocations(self, offset):
         return {addr + offset: symbol for addr, symbol in self.relocations.items()}
@@ -133,6 +132,13 @@ class LValue:
     def set(self, value):
         return self.bytecode.append(value.get()).append(Linkable(self.options['set']))
 
+    def set_update(self, value, op):
+        dup_mapped = {
+                1: 'ST_DUP',
+                2: 'ST_DUP2',
+        }[self.options['args']]
+        return self.bytecode.append(Linkable(bytes([OPCODES[dup_mapped]]))).append(Linkable(self.options['get'])).append(value.get()).append(Linkable(bytes([OPCODES[op]]))).append(Linkable(self.options['set']))
+
     def del_(self, value):
         return self.bytecode.append(Linkable(self.options['del']))
 
@@ -140,16 +146,19 @@ OPTIONS_IDENT = {
         'get': bytes([OPCODES['GET_LOCAL']]),
         'set': bytes([OPCODES['SET_LOCAL']]),
         'del': bytes([OPCODES['DEL_LOCAL']]),
+        'args': 1,
 }
 OPTIONS_ITEM = {
         'get': bytes([OPCODES['GET_ITEM']]),
         'set': bytes([OPCODES['SET_ITEM']]),
         'del': bytes([OPCODES['DEL_ITEM']]),
+        'args': 2,
 }
 OPTIONS_ATTR = {
         'get': bytes([OPCODES['GET_ATTR']]),
         'set': bytes([OPCODES['SET_ATTR']]),
         'del': bytes([OPCODES['DEL_ATTR']]),
+        'args': 2,
 }
 
 def encode_bytes(bytestring):
@@ -182,7 +191,7 @@ def p_expression_0_tuple(p):
     p[0] = Linkable(b'')
     for elem in p[2]:
         p[0].append(elem.get())
-    p[0].append(Linkable(bytes([OPCODES['TUPLE_N']]) + leb128.u.encode(len(elem))))
+    p[0].append(Linkable(bytes([OPCODES['TUPLE_N']]) + leb128.u.encode(len(p[2]))))
 
 def p_expression_0_fn(p):
     "expression_0 : FN LPAREN ident_list RPAREN optional_scope LBRACE statement_list RBRACE"
@@ -246,11 +255,19 @@ def p_expression_1_item(p):
     "expression_1 : expression_1 LBRACKET expression_4 RBRACKET"
     p[0] = LValue(p[1].get().append(p[3].get()), OPTIONS_ITEM)
 
+def p_expression_1_slice(p):
+    "expression_1 : expression_1 LBRACKET expression_optional COLON expression_optional RBRACKET"
+    slice_expr = Linkable(bytes())
+    slice_expr.append(p[3].get() if p[3] is not None else Linkable(bytes([OPCODES['LIT_NONE']])))
+    slice_expr.append(p[5].get() if p[5] is not None else Linkable(bytes([OPCODES['LIT_NONE']])))
+    slice_expr.append(Linkable(bytes([OPCODES['LIT_SLICE']])))
+    p[0] = LValue(p[1].get().append(slice_expr), OPTIONS_ITEM)
+
 def p_expression_1_call(p):
     "expression_1 : expression_1 LPAREN expression_list RPAREN"
     p[0] = p[1].get()
     for expr in p[3]:
-        p[0].append(expr)
+        p[0].append(expr.get())
     p[0].append(Linkable(bytes([OPCODES['TUPLE_N']]) + leb128.u.encode(len(p[3])) + bytes([OPCODES['CALL']])))
 
 def p_expression_2_escape(p):
@@ -303,6 +320,7 @@ def p_expression_3_binop(p):
         '-': 'OP_SUB',
         '*': 'OP_MUL',
         '/': 'OP_DIV',
+        '%': 'OP_MOD',
         '&': 'OP_AND',
         '|': 'OP_OR',
         '^': 'OP_XOR',
@@ -332,7 +350,7 @@ def p_expression_4_and(p):
     # pop
     # <expr_2>
     end = object()
-    code = Linkable(bytes([OPCODES['OP_DUP'], OPCODES['OP_NEG'], OPCODES['JUMP_IF'], 0,0,0,0, OPCODES['ST_POP']]), relocations={3: end})
+    code = Linkable(bytes([OPCODES['OP_DUP'], OPCODES['OP_NOT'], OPCODES['JUMP_IF'], 0,0,0,0, OPCODES['ST_POP']]), relocations={3: end})
     p[0].append(code).append(p[3].get())
     p[0].symbols[end] = len(p[0])
 
@@ -343,6 +361,14 @@ def p_expression_4_or(p):
     code = Linkable(bytes([OPCODES['OP_DUP'], OPCODES['JUMP_IF'], 0,0,0,0, OPCODES['ST_POP']]), relocations={2: end})
     p[0].append(code).append(p[3].get())
     p[0].symbols[end] = len(p[0])
+
+def p_expression_optional(p):
+    """expression_optional : expression_4
+                           | """ # empty
+    if len(p) == 1:
+        p[0] = None
+    else:
+        p[0] = p[1]
 
 def p_ident_list(p):
     """ident_list : ident_list_inner
@@ -401,11 +427,43 @@ def p_statement_expression(p):
     p[0].append(Linkable(bytes([OPCODES['ST_POP']])))
 
 def p_statement_assignment(p):
-    "statement : expression_4 ASSIGN expression_4 SEMICOLON"
+    "statement : expression_4 assign_op expression_4 SEMICOLON"
     if type(p[1]) is not LValue:
         print("Error: left hand side of assignment must be an lvalue")
         raise SyntaxError
-    p[0] = p[1].set(p[3])
+    if p[2] == '=':
+        p[0] = p[1].set(p[3])
+    else:
+        op_mapped = {
+                '+=': 'OP_ADD',
+                '-=': 'OP_SUB',
+                '*=': 'OP_MUL',
+                '/=': 'OP_DIV',
+                '%=': 'OP_MOD',
+                '&=': 'OP_AND',
+                '|=': 'OP_OR',
+                '^=': 'OP_XOR',
+        }[p[2]]
+        p[0] = p[1].set_update(p[3], op_mapped);
+
+def p_assignemnt_operator(p):
+    """assign_op : ASSIGN
+                 | ASSIGN_PLUS
+                 | ASSIGN_MINUS
+                 | ASSIGN_MUL
+                 | ASSIGN_DIV
+                 | ASSIGN_MOD
+                 | ASSIGN_AND
+                 | ASSIGN_OR
+                 | ASSIGN_XOR"""
+    p[0] = p[1]
+
+def p_statement_del(p):
+    "statement : DEL expression_4 SEMICOLON"
+    if type(p[2]) is not LValue:
+        print("Error: left hand side of assignment must be an lvalue")
+        raise SyntaxError
+    p[0] = p[2].del_()
 
 def p_statement_if(p):
     "statement : IF expression_4 LBRACE statement_list RBRACE if_tail"
@@ -415,7 +473,7 @@ def if_body(condition, body, tail):
     result = condition.get()
     lbl_tail = object()
     lbl_end = object()
-    result.append(Linkable(bytes([OPCODES['OP_NEG'], OPCODES['JUMP_IF'], 0,0,0,0]), relocations={2: lbl_tail}))
+    result.append(Linkable(bytes([OPCODES['OP_NOT'], OPCODES['JUMP_IF'], 0,0,0,0]), relocations={2: lbl_tail}))
     result.append(body)
     result.append(Linkable(bytes([OPCODES['JUMP'], 0,0,0,0]), relocations={1: lbl_end}))
     result.symbols[lbl_tail] = len(result)
@@ -440,7 +498,7 @@ def p_statement_while(p):
     lbl_end = object()
     lbl_start = object()
     p[0].symbols[lbl_start] = 0
-    p[0].append(Linkable(bytes([OPCODES['OP_NEG'], OPCODES['JUMP_IF'], 0,0,0,0]), relocations={2: lbl_end}))
+    p[0].append(Linkable(bytes([OPCODES['OP_NOT'], OPCODES['JUMP_IF'], 0,0,0,0]), relocations={2: lbl_end}))
     p[0].append(p[4])
     p[0].append(Linkable(bytes([OPCODES['JUMP'], 0,0,0,0]), relocations={1: lbl_start}))
     p[0].symbols[lbl_end] = len(p[0])

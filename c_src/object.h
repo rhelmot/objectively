@@ -183,17 +183,26 @@ extern ObjectTable exc_table;
 extern ObjectTable type_table;
 
 IntObject *int_raw(int64_t value);
+IntObject *int_raw_ex(int64_t value, TypeObject *type);
 EmptyObject *bool_raw(bool value);
 FloatObject *float_raw(double value);
+FloatObject *float_raw_ex(double value, TypeObject *type);
 ListObject *list_raw(Object **data, size_t len);
+ListObject *list_raw_ex(Object **data, size_t len, TypeObject *type);
 TupleObject *tuple_raw(Object **data, size_t len);
+TupleObject *tuple_raw_ex(Object **data, size_t len, TypeObject *type);
 BytesObject *bytes_raw(const char *data, size_t len);
+BytesObject *bytes_raw_ex(const char *data, size_t len, TypeObject *type);
 BytesUnownedObject *bytes_unowned_raw(const char *data, size_t len, Object *owner);
+BytesUnownedObject *bytes_unowned_raw_ex(const char *data, size_t len, Object *owner, TypeObject *type);
 DictObject *dicto_raw();
+DictObject *dicto_raw_ex(TypeObject *type);
 BasicObject *object_raw(TypeObject *type);
 ClosureObject *closure_raw(BytesObject *bytecode, DictObject *context);
+ClosureObject *closure_raw_ex(BytesObject *bytecode, DictObject *context, TypeObject *type);
 BoundMethodObject *boundmeth_raw(Object *meth, Object *self);
 SliceObject *slice_raw(Object *start, Object *end);
+SliceObject *slice_raw_ex(Object *start, Object *end, TypeObject *type);
 ExceptionObject *exc_raw(TypeObject *type, TupleObject *args);
 
 Object *exc_constructor(Object *self, TupleObject *args);

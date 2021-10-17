@@ -7,5 +7,5 @@ import parser as parser_module
 
 lexer = lex(module=lexer_module)
 parser = yacc(module=parser_module)
-result = parser.parse(open(sys.argv[1]).read(), lexer=lexer, debug=False)
+result = parser.parse(open(sys.argv[1]).read(), lexer=lexer, debug='--debug' in sys.argv)
 open(sys.argv[2], 'wb').write(result.link())

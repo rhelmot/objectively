@@ -4,6 +4,7 @@ from ply.lex import TOKEN
 keywords = {
         'fn': 'FN',
         'class': 'CLASS',
+        'del': 'DEL',
         'if': 'IF',
         'elif': 'ELIF',
         'else': 'ELSE',
@@ -40,6 +41,14 @@ punctuation = {
         '[': 'LBRACKET',
         ']': 'RBRACKET',
         '=': 'ASSIGN',
+        '+=': 'ASSIGN_PLUS',
+        '-=': 'ASSIGN_MINUS',
+        '*=': 'ASSIGN_MUL',
+        '/=': 'ASSIGN_DIV',
+        '%=': 'ASSIGN_MOD',
+        '&=': 'ASSIGN_AND',
+        '|=': 'ASSIGN_OR',
+        '^=': 'ASSIGN_XOR',
         '==': 'EQ',
         '!=': 'NE',
         '>': 'GT',
@@ -59,7 +68,7 @@ tokens = (
 for op, name in punctuation.items():
     globals()[f't_{name}'] = re.escape(op)
 
-m_LIT_INT = r'[0-9]+(?!\.)|0x[0-9a-fA-F]+'
+m_LIT_INT = r'[0-9]+(?![\.x])|0x[0-9a-fA-F]+'
 m_LIT_FLOAT = r'([0-9]+\.[0-9]*)|([0-9]*\.[0-9]+)'
 m_LIT_BYTES = r'"([^"\\]*(\\\\|\\"|\\' + "'" + r'|\\n|\\r|\\t|\\x[0-9a-fA-F]{2})*)*"|' + \
               r"'([^'\\]*(\\\\|\\'|\\" + '"' + r"|\\n|\\r|\\t|\\x[0-9a-fA-F]{2})*)*'"
@@ -73,7 +82,7 @@ def t_LIT_FLOAT(t):
     return t
 @TOKEN(m_LIT_BYTES)
 def t_LIT_BYTES(t):
-    t.value = eval(t.value)
+    t.value = eval('b' + t.value)
     return t
 def t_IDENT(t):
     r"[_a-zA-Z][_a-zA-Z0-9]*"

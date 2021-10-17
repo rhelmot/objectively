@@ -2,6 +2,8 @@
 #include <string.h>
 #include <alloca.h>
 
+#include "builtins.h"
+#include "errors.h"
 #include "object.h"
 #include "gc.h"
 
@@ -21,7 +23,10 @@ int main(int argc, char **argv) {
 	rewind(fp);
 
 	char *data = malloc(filesize);
-	fread(data, 1, filesize, fp);
+	if (fread(data, 1, filesize, fp) != filesize) {
+		puts("Couldn't read entire file");
+		return 1;
+	}
 	fclose(fp);
 	BytesObject *bytes = bytes_raw(data, filesize);
 	free(data);
@@ -35,16 +40,26 @@ int main(int argc, char **argv) {
 
 	gc_root((Object*)real_main);
 	gc_root((Object*)argv_obj);
-	IntObject /*lol*/ *result = (IntObject*)call((Object*)real_main, argv_obj);
+	Object *result = call((Object*)real_main, argv_obj);
 	gc_unroot((Object*)real_main);
 	gc_unroot((Object*)argv_obj);
 
 	if (result == NULL) {
 		puts("Program aborted with error");
+		TupleObject *print_args = tuple_raw((Object*[]){error}, 1);
+		if (print_args == NULL) {
+			puts("Could not convert error to string?");
+			return 1;
+		}
+		if (builtin_print(print_args) == NULL) {
+			puts("Could not convert error to string");
+			return 1;
+		}
 		gc_collect();
 		return 1;
 	} else {
+		int64_t retcode = result->type == &g_int ? ((IntObject*)result)->value : 0;
 		gc_collect();
-		return result->value;
+		return retcode;
 	}
 }

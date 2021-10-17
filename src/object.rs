@@ -7,12 +7,14 @@ use shredder::{Gc, GcGuard, Scan, ToScan};
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::vec::Vec;
+use std::ptr;
 
 use parking_lot::{Mutex, MutexGuard};
 use std::marker::Unsize;
 use std::ops::Deref;
 
 pub type Object = Gc<GCell<dyn ObjectTrait>>;
+pub type NewObject = Gc<GCell<ObjectStruct>>;
 pub type GenericResult<T> = Result<T, Exception>;
 pub type NullResult = GenericResult<()>;
 pub type ObjectResult = GenericResult<Object>;
@@ -59,6 +61,73 @@ impl Exception {
             args: vec![],
         }
     }
+}
+
+pub enum ObjectShape {
+    EmptyShape(),
+    IntShape(i64),
+    FloatShape(f64),
+    BytesShape(Box<[u8]>),
+    VecShape(Vec<Object>),
+    MapShape(HashMap<Object, Object>),
+    AttrShape(HashMap<String, Object>),
+    TypeShape {
+        name: String,
+        base_class: Object,
+        members: HashMap<String, Object>,
+        constructor: &'static ObjectSelfFunction,
+    }
+}
+
+impl ObjectShape {
+    pub fn get_attr(&self, attr: &str) -> Option<Object> {
+        match self {
+            ObjectShape::AttrShape(m) => m.get(attr),
+            ObjectShape::TypeShape { members: m, .. } => m.get(attr),
+            _ => None,
+        }
+    }
+}
+
+pub struct ObjectStruct {
+    pub type_: Object,
+    pub shape: ObjectShape,
+}
+
+pub fn get_attr(gil: &mut MutexGuard<GCellOwner>, this: NewObject, attr: &str) -> ObjectResult {
+    let this_unlocked = this.get().ro(gil);
+    if let Some(o) = this_unlocked.shape.get_attr(attr) {
+        return Ok(o);
+    }
+
+    if let ObjectShape::TypeShape { base_class: b, .. } = this_unlocked {
+        let mut b_unlocked = b.get().ro(gil);
+        loop {
+            if let ObjectShape::TypeShape { base_class: next_b, members: m, .. } = b_unlocked {
+                if let Some(o) = b_unlocked.shape.get_attr(attr) {
+                    return Ok(o);
+                }
+                let next_b_unlocked = next_b.get().ro(gil);
+                if ptr::eq(b_unlocked, next_b_unlocked) {
+                    break;
+                }
+                b_unlocked = next_b_unlocked;
+            } else {
+                panic!("Type does not have TypeShape");
+            }
+        }
+    }
+    let type_ = &this_unlocked.type_;
+    let type_unlocked = type_.get().ro(gil);
+    loop {
+        if let ObjectShape::TypeShape { base_class: next_type, members: m, .. } = type_ {
+
+        } else {
+            panic!("Type does not have TypeShape");
+        }
+    }
+
+    Err(Exception::attribute_error(attr))
 }
 
 pub trait ObjectTrait: GcDrop + Scan + ToScan + Send + Sync {

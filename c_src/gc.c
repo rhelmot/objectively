@@ -115,7 +115,12 @@ void gc_collect() {
 
 void gc_probe() {
 	// TODO uhhhhhhhhhhhhhhh heuristics
-	gc_collect();
+	static int gc_counter = 0;
+	gc_counter++;
+	if (gc_counter == 1000) {
+		gc_counter = 0;
+		gc_collect();
+	}
 }
 
 bool gc_root(Object *obj) {
