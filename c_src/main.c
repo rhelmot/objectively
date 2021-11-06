@@ -6,6 +6,7 @@
 #include "errors.h"
 #include "object.h"
 #include "gc.h"
+#include "thread.h"
 
 int main(int argc, char **argv) {
 	if (argc < 2) {
@@ -51,10 +52,11 @@ int main(int argc, char **argv) {
 			puts("Could not convert error to string?");
 			return 1;
 		}
+		gc_root((Object*)print_args);
 		if (builtin_print(print_args) == NULL) {
 			puts("Could not convert error to string");
-			return 1;
 		}
+		gc_unroot((Object*)print_args);
 		gc_collect();
 		return 1;
 	} else {

@@ -13,6 +13,7 @@ BUILTIN_TYPE(IndexError, exception, exc_constructor);
 BUILTIN_TYPE(TypeError, exception, exc_constructor);
 BUILTIN_TYPE(ValueError, exception, exc_constructor);
 BUILTIN_TYPE(ZeroDivisionError, exception, exc_constructor);
+BUILTIN_TYPE(StopIteration, exception, exc_constructor);
 
 ExceptionObject MemoryError_inst = {
 	.header = (ObjectHeader) {
@@ -41,6 +42,18 @@ Object *exc_msg(TypeObject *type, char *msg) {
 
 Object *exc_arg(TypeObject *type, Object *arg) {
 	TupleObject *args = tuple_raw(&arg, 1);
+	if (args == NULL) {
+		return (Object*)&MemoryError_inst;
+	}
+	ExceptionObject *result = exc_raw(type, args);
+	if (result == NULL) {
+		return (Object*)&MemoryError_inst;
+	}
+	return (Object*)result;
+}
+
+Object *exc_nil(TypeObject *type) {
+	TupleObject *args = tuple_raw(NULL, 0);
 	if (args == NULL) {
 		return (Object*)&MemoryError_inst;
 	}

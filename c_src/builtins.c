@@ -2,10 +2,12 @@
 #include <stdio.h>
 #include <alloca.h>
 #include <stdarg.h>
+#include <time.h>
 
 #include "object.h"
 #include "gc.h"
 #include "errors.h"
+#include "thread.h"
 
 #define BUILTIN_METHOD(name, function, cls) \
 BuiltinFunctionObject g_##cls##_##name = { \
@@ -43,6 +45,78 @@ size_t convert_index(size_t len, int64_t idx) {
 	}
 	return (size_t)idx;
 }
+Object *own_iter(TupleObject *args) {
+	if (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	return args->data[0];
+}
+
+/////////////////////////////////////
+// list iterator declaration and methods
+/////////////////////////////////////
+
+typedef struct ListIterator {
+	ObjectHeader header;
+	Object *child;
+	size_t next_index;
+} ListIterator;
+
+bool list_iterator_trace(Object *_self, bool (*tracer)(Object *tracee)) {
+	ListIterator *self = (ListIterator*)_self;
+	if (!tracer(self->child)) return false;
+	return true;
+}
+
+ObjectTable list_iterator_table = {
+	.trace = list_iterator_trace,
+	.finalize = null_finalize,
+	.get_attr = null_get_attr,
+	.set_attr = null_set_attr,
+	.del_attr = null_del_attr,
+	.call = null_call,
+};
+
+BUILTIN_TYPE(list_iterator, object, null_constructor);
+
+Object *list_iter_next(TupleObject *args) {
+	if (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_list_iterator)) {
+		error = exc_msg(&g_TypeError, "Expected list iterator");
+		return NULL;
+	}
+
+	ListIterator *self = (ListIterator*)args->data[0];
+	Object *method = get_attr_inner(self->child, "__getitem__");
+	if (method == NULL) {
+		return NULL;
+	}
+	IntObject *index = int_raw(self->next_index);
+	if (index == NULL) {
+		return NULL;
+	}
+	TupleObject *inner_args = tuple_raw((Object**)&index, 1);
+	if (args == NULL) {
+		return NULL;
+	}
+	gc_root((Object*)inner_args);
+	Object *result = call(method, inner_args);
+	gc_unroot((Object*)inner_args);
+	if (result == NULL) {
+		if (isinstance_inner(error, &g_IndexError)) {
+			error = exc_nil(&g_StopIteration);
+		}
+		return NULL;
+	}
+	self->next_index++;
+	return result;
+}
+BUILTIN_METHOD(__next__, list_iter_next, list_iterator);
+BUILTIN_METHOD(__iter__, own_iter, list_iterator);
 
 /////////////////////////////////////
 /// dict methods
@@ -117,7 +191,7 @@ Object *dict_delitem(TupleObject *args) {
 }
 BUILTIN_METHOD(__delitem__, dict_delitem, dict);
 
-Object *dict_hash(TupleObject *args) {
+Object *dict_hash(TupleObject *_args) {
 	error = exc_msg(&g_TypeError, "Unhashable");
 	return NULL;
 }
@@ -1527,8 +1601,22 @@ Object *object_repr(TupleObject *args) {
 }
 BUILTIN_METHOD(__repr__, object_repr, object);
 
+Object *object_iter(TupleObject *args) {
+	if (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	ListIterator *result = (ListIterator*)gc_malloc(sizeof(ListIterator));
+	result->header.type = &g_list_iterator;
+	result->header.table = &list_iterator_table;
+	result->child = args->data[0];
+	result->next_index = 0;
+	return (Object*)result;
+}
+BUILTIN_METHOD(__iter__, object_iter, object);
+
 /////////////////////////////////////
-/// exception functions
+/// exception methods
 /////////////////////////////////////
 
 Object *exc_str(TupleObject *args) {
@@ -1577,7 +1665,7 @@ Object *slice_str(TupleObject *args) {
 BUILTIN_METHOD(__str__, slice_str, slice);
 
 /////////////////////////////////////
-/// nonetype functions
+/// nonetype methods
 /////////////////////////////////////
 
 Object *none_str(TupleObject *args) {
@@ -1586,24 +1674,90 @@ Object *none_str(TupleObject *args) {
 BUILTIN_METHOD(__str__, none_str, nonetype);
 
 /////////////////////////////////////
-/// freestanding functions
+/// thread methods
 /////////////////////////////////////
 
-Object *builtin_print(TupleObject *args) {
-	for (size_t i = 0; i < args->len; i++) {
-		if (i != 0) {
-			putchar(' ');
-		}
-		BytesObject *as_str = bytes_constructor_inner(args->data[i]);
-		if (as_str == NULL) {
-			return NULL;
-		}
-		fwrite(bytes_data(as_str), 1, as_str->len, stdout);
+Object *thread_str(TupleObject *args) {
+	return (Object*)bytes_unowned_raw("<Thread>", 8, NULL);
+}
+BUILTIN_METHOD(__str__, thread_str, thread);
+
+Object *thread_next(TupleObject *args) {
+	if (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
 	}
-	puts("");
+	if (!isinstance_inner(args->data[0], &g_thread)) {
+		error = exc_msg(&g_TypeError, "Expected thread");
+		return NULL;
+	}
+	ThreadObject *self = (ThreadObject*)args->data[0];
+
+	while (self->status == RUNNING) {
+		sleep_inner(0.0000001);
+	}
+	if (self->status == YIELDED) {
+		self->status = RUNNING;
+		return self->result;
+	}
+	if (self->status == RETURNED) {
+		error = exc_nil(&g_StopIteration);
+		return NULL;
+	}
+	if (self->status == EXCEPTED) {
+		error = self->result;
+		return NULL;
+	}
+	error = exc_msg(&g_RuntimeError, "Thread is in a bad state");
+	return NULL;
+}
+BUILTIN_METHOD(__next__, thread_next, thread);
+
+Object *thread_join(TupleObject *args) {
+	if (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_thread)) {
+		error = exc_msg(&g_TypeError, "Expected thread");
+		return NULL;
+	}
+	ThreadObject *self = (ThreadObject*)args->data[0];
+
+	while (self->status != RETURNED && self->status != EXCEPTED) {
+		sleep_inner(0.0000001);
+	}
+
+	// TODO timeout
 	return (Object*)&g_none;
 }
-BUILTIN_FUNCTION(print, builtin_print);
+BUILTIN_METHOD(join, thread_join, thread);
+
+Object *thread_inject(TupleObject *args) {
+	if (args->len != 2) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_thread)) {
+		error = exc_msg(&g_TypeError, "Expected thread");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[1], &g_exception)) {
+		error = exc_msg(&g_TypeError, "Expected exception");
+		return NULL;
+	}
+
+	ThreadObject *self = (ThreadObject*)args->data[0];
+	self->injected = (ExceptionObject*)args->data[1];
+	return (Object*)&g_none;
+}
+BUILTIN_METHOD(inject, thread_inject, thread);
+
+BUILTIN_METHOD(__iter__, own_iter, thread);
+
+/////////////////////////////////////
+/// freestanding functions
+/////////////////////////////////////
 
 Object *builtin_format(TupleObject *args) {
 	TupleObject *converted_args = tuple_raw(NULL, args->len);
@@ -1625,6 +1779,20 @@ Object *builtin_format(TupleObject *args) {
 	return bytes_join(inner_args);
 }
 BUILTIN_FUNCTION(format, builtin_format);
+
+Object *builtin_print(TupleObject *args) {
+	Object *formatted = builtin_format(args);
+	if (formatted == NULL) {
+		return NULL;
+	}
+	void writer() {
+		fwrite(bytes_data((BytesObject*)formatted), 1, ((BytesObject*)formatted)->len, stdout);
+		puts("");
+	}
+	gil_yield(writer);
+	return (Object*)&g_none;
+}
+BUILTIN_FUNCTION(print, builtin_print);
 
 Object *format_inner(const char *format, ...) {
 	va_list ap;
@@ -1760,10 +1928,39 @@ Object *builtin_input(TupleObject *args) {
 		return NULL;
 	}
 	char buf[1024];
-	if (!fgets(buf, 1024, stdin)) {
+	bool failure;
+	void reader() { failure = !fgets(buf, 1024, stdin); }
+	gil_yield(reader);
+	if (failure) {
 		error = exc_msg(&g_RuntimeError, "Could not read from stdin");
 		return NULL;
 	}
 	return (Object*)bytes_raw(buf, strlen(buf));
 }
 BUILTIN_FUNCTION(input, builtin_input);
+
+void sleep_inner(double time) {
+	struct timespec timespec = { (time_t)time, (long)(time * 1000000000.) % 1000000000l };
+	void sleeper() {
+		while (nanosleep(&timespec, &timespec) < 0);
+	}
+	gil_yield(sleeper);
+}
+Object *builtin_sleep(TupleObject *args) {
+	if (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	double sleep;
+	if (isinstance_inner(args->data[0], &g_int)) {
+		sleep = (double)((IntObject*)args->data[0])->value;
+	} else if (isinstance_inner(args->data[0], &g_float)) {
+		sleep = ((FloatObject*)args->data[0])->value;
+	} else {
+		error = exc_msg(&g_TypeError, "Expected int or float");
+		return NULL;
+	}
+	sleep_inner(sleep);
+	return (Object*)&g_none;
+}
+BUILTIN_FUNCTION(sleep, builtin_sleep);

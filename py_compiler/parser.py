@@ -46,6 +46,7 @@ OPCODES = dict(
 	RAISE = 66,
 	RETURN = 67,
 	YIELD = 68,
+        RAISE_IF_NOT_STOP = 69,
 	OP_ADD = 80,
 	OP_SUB = 81,
 	OP_MUL = 82,
@@ -82,12 +83,20 @@ l_CONTINUE = object()
 l_BREAK = object()
 
 class Linkable:
-    def __init__(self, bytecode, symbols=None, relocations=None):
+    def __init__(self, *bytecode, symbols=None, relocations=None):
         if symbols is None:
             symbols = {}
         if relocations is None:
             relocations = {}
-        self.bytecode = [bytecode]
+        real_bytecode = bytearray()
+        for b in bytecode:
+            if type(b) is int:
+                real_bytecode.append(b)
+            elif type(b) in (bytes, bytearray):
+                real_bytecode.extend(b)
+            else:
+                raise TypeError(type(b))
+        self.bytecode = [real_bytecode]
         self.symbols = symbols
         self.relocations = relocations
 
@@ -269,6 +278,13 @@ def p_expression_1_call(p):
     for expr in p[3]:
         p[0].append(expr.get())
     p[0].append(Linkable(bytes([OPCODES['TUPLE_N']]) + leb128.u.encode(len(p[3])) + bytes([OPCODES['CALL']])))
+
+def p_expression_1_spawn(p):
+    "expression_1 : SPAWN expression_1 LPAREN expression_list RPAREN"
+    p[0] = p[2].get()
+    for expr in p[4]:
+        p[0].append(expr.get())
+    p[0].append(Linkable(bytes([OPCODES['TUPLE_N']]) + leb128.u.encode(len(p[4])) + bytes([OPCODES['SPAWN']])))
 
 def p_expression_2_escape(p):
     "expression_2 : expression_1"
@@ -509,13 +525,61 @@ def p_statement_while(p):
         elif lbl is l_BREAK:
             p[0].relocations[addr] = lbl_end
 
+def p_statement_for(p):
+    "statement : FOR IDENT IN expression_4 LBRACE statement_list RBRACE"
+    unique_ident = '__for_%s' % p.lexpos
+    lbl_start = object()
+    lbl_end = object()
+    lbl_catch = object()
+    p[0] = Linkable(OPCODES['LIT_BYTES'], encode_bytes(unique_ident))
+    p[0].append(p[4].get())
+    p[0].append(Linkable(
+        OPCODES['LIT_BYTES'],
+        encode_bytes("__iter__"),
+        OPCODES['GET_ATTR'],
+        OPCODES['TUPLE_0'],
+        OPCODES['CALL'],
+        OPCODES['SET_LOCAL'],
+    ))
+    p[0].symbols[lbl_start] = len(p[0])
+    p[0].append(Linkable(OPCODES['TRY'], 0,0,0,0, relocations={1: lbl_catch}))
+    p[0].append(Linkable(
+        OPCODES['LIT_BYTES'],
+        encode_bytes(p[2]),
+        OPCODES['LIT_BYTES'],
+        encode_bytes(unique_ident),
+        OPCODES['GET_LOCAL'],
+        OPCODES['LIT_BYTES'],
+        encode_bytes("__next__"),
+        OPCODES['GET_ATTR'],
+        OPCODES['TUPLE_0'],
+        OPCODES['CALL'],
+        OPCODES['SET_LOCAL'],
+        OPCODES['TRY_END'],
+    ))
+    p[0].append(p[6])
+    p[0].append(Linkable(OPCODES['JUMP'], 0,0,0,0, relocations={1: lbl_start}))
+    p[0].symbols[lbl_catch] = len(p[0])
+    p[0].append(Linkable(OPCODES['RAISE_IF_NOT_STOP']))
+    p[0].symbols[lbl_end] = len(p[0])
+
+    for addr, lbl in p[0].relocations.items():
+        if lbl is l_CONTINUE:
+            p[0].relocations[addr] = lbl_start
+        elif lbl is l_BREAK:
+            p[0].relocations[addr] = lbl_end
+
 def p_statement_return(p):
     "statement : RETURN expression_4 SEMICOLON"
     p[0] = p[2].get().append(Linkable(bytes([OPCODES['RETURN']])))
 
 def p_statement_throw(p):
     "statement : THROW expression_4 SEMICOLON"
-    p[0] = p[2].get().append(Linkable(bytes([OPCODES['THROW']])))
+    p[0] = p[2].get().append(Linkable(bytes([OPCODES['RAISE']])))
+
+def p_statement_yield(p):
+    "statement : YIELD expression_4 SEMICOLON"
+    p[0] = p[2].get().append(Linkable(bytes([OPCODES['YIELD']])))
 
 def p_statement_label(p):
     "statement : IDENT COLON"

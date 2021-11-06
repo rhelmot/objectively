@@ -153,9 +153,9 @@ BUILTIN_TYPE(bytes, object, bytes_constructor);
 BUILTIN_TYPE(dict, object, dict_constructor);
 BUILTIN_TYPE(list, object, list_constructor);
 BUILTIN_TYPE(tuple, object, tuple_constructor);
-BUILTIN_TYPE(builtin, object, builtin_constructor);
+BUILTIN_TYPE(builtin, object, null_constructor);
 BUILTIN_TYPE(closure, object, closure_constructor);
-BUILTIN_TYPE(boundmeth, object, boundmeth_constructor);
+BUILTIN_TYPE(boundmeth, object, null_constructor);
 BUILTIN_TYPE(slice, object, slice_constructor);
 BUILTIN_TYPE(exception, object, exc_constructor);
 
@@ -166,6 +166,7 @@ EmptyObject g_none = {
 	},
 };
 STATIC_OBJECT(g_none);
+ADD_MEMBER(builtins, "none", g_none);
 EmptyObject g_true = {
 	.header = (ObjectHeader) {
 		.type = &g_bool,
@@ -173,6 +174,7 @@ EmptyObject g_true = {
 	},
 };
 STATIC_OBJECT(g_true);
+ADD_MEMBER(builtins, "true", g_true);
 EmptyObject g_false = {
 	.header = (ObjectHeader) {
 		.type = &g_bool,
@@ -180,6 +182,7 @@ EmptyObject g_false = {
 	},
 };
 STATIC_OBJECT(g_false);
+ADD_MEMBER(builtins, "false", g_false);
 TupleObject empty_tuple = {
 	.header = (ObjectHeader) {
 		.type = &g_tuple,
@@ -1030,11 +1033,6 @@ EmptyObject *bool_constructor_inner(Object *obj) {
 	return (EmptyObject*)result;
 }
 
-Object *builtin_constructor(Object *self, TupleObject *args) {
-	error = exc_msg(&g_RuntimeError, "how did you do that");
-	return NULL;
-}
-
 Object *dict_constructor(Object *_self, TupleObject *args) {
 	TypeObject *self = (TypeObject*)_self;
 	if (args->len == 0) {
@@ -1077,8 +1075,8 @@ Object *nonetype_constructor(Object *self, TupleObject *args) {
 	return (Object*)&g_none;
 }
 
-Object *boundmeth_constructor(Object *self, TupleObject *args) {
-	error = exc_msg(&g_RuntimeError, "how did you do that");
+Object *null_constructor(Object *self, TupleObject *args) {
+	error = exc_msg(&g_RuntimeError, "Object cannot be constructed");
 	return NULL;
 }
 

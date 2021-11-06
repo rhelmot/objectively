@@ -1,18 +1,5 @@
-hello = fn() {
-	print("Hello, world!");
-};
-hello();
-
-A = class(object) {
-	__init__ = fn(self, a) {
-		self.a = a;
-		self.b = 1;
-	};
-
-	c = fn(self, d, e) {
-		return self.a + self.b + d + e;
-	};
-};
-
-a = A(2);
-return a.c(4, 8);
+t3 = spawn fn() { i = 0; while i < 10 { yield i; i += 1; } }();
+for elem in t3 {
+	print(elem);
+	t3.inject(StopIteration());
+}

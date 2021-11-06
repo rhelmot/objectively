@@ -4,6 +4,7 @@
 #include "object.h"
 #include "builtins.h"
 #include "errors.h"
+#include "thread.h"
 
 typedef enum Opcode {
 	ERROR = 0,
@@ -47,6 +48,7 @@ typedef enum Opcode {
 	RAISE = 66,
 	RETURN = 67,
 	YIELD = 68,
+	RAISE_IF_NOT_STOP = 69, // I swear to god I didn't give the funniest opcode the funniest number on purpose
 	OP_ADD = 80,
 	OP_SUB = 81,
 	OP_MUL = 82,
@@ -193,6 +195,9 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 			}
 		}
 		gc_probe();
+		if (!gil_probe()) {
+			goto ERROR;
+		}
 		if (pointer == &bytes_data(closure->bytecode)[closure->bytecode->len]) {
 			result = (Object*)&g_none;
 			break;
@@ -440,6 +445,18 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 				PUSH(CHECK(call(target, (TupleObject*)args)));
 				continue;
 			}
+			case SPAWN: {
+				Object *args = POP();
+				Object *target = POP();
+				if (args->type != &g_tuple) {
+					error = exc_msg(&g_TypeError, "Expected tuple");
+					break;
+				}
+				TEMPROOT(args);
+				TEMPROOT(target);
+				PUSH(CHECK(thread_raw(target, (TupleObject*)args, &g_thread)));
+				continue;
+			}
 			case RAISE: {
 				error = POP();
 				break;
@@ -447,6 +464,19 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 			case RETURN: {
 				result = POP();
 				goto EXIT;
+			}
+			case YIELD: {
+				Object *val = POP();
+				CHECK(thread_yield(val));
+				continue;
+			}
+			case RAISE_IF_NOT_STOP: {
+				Object *e = POP();
+				if (!isinstance_inner(e, &g_StopIteration)) {
+					error = e;
+					break;
+				}
+				continue;
 			}
 			case OP_ADD: {
 				BINOP(add);
@@ -530,8 +560,10 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 			}
 		}
 
-		Object *local_error = error;
-		Object *_catch_target = list_pop_back_inner(trystack);
+		Object *local_error, *_catch_target;
+ERROR:
+		local_error = error;
+		_catch_target = list_pop_back_inner(trystack);
 		if (_catch_target == NULL) {
 			error = local_error;
 			goto EXIT;

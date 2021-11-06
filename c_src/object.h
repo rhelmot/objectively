@@ -211,6 +211,8 @@ Object *type_constructor(Object *self, TupleObject *args);
 DictObject *dict_dup_inner(DictObject *self);
 BytesObject *bytes_constructor_inner(Object *arg);
 EmptyObject *bool_constructor_inner(Object *arg);
+Object *null_constructor(Object *self, TupleObject *args);
+bool object_equals_str(Object *obj, char *str);
 
 typedef struct MemberInitEntry {
 	DictObject *self;

@@ -13,8 +13,10 @@ extern TypeObject g_IndexError;
 extern TypeObject g_TypeError;
 extern TypeObject g_ValueError;
 extern TypeObject g_ZeroDivisionError;
+extern TypeObject g_StopIteration;
 
 extern ExceptionObject MemoryError_inst;
 
 Object *exc_msg(TypeObject *type, char *msg);
 Object *exc_arg(TypeObject *type, Object *arg);
+Object *exc_nil(TypeObject *type);

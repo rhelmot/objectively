@@ -9,6 +9,8 @@ keywords = {
         'elif': 'ELIF',
         'else': 'ELSE',
         'while': 'WHILE',
+        'for': 'FOR',
+        'in': 'IN',
         'try': 'TRY',
         'catch': 'CATCH',
         'and': 'LOGAND',
@@ -18,6 +20,8 @@ keywords = {
         'goto': 'GOTO',
         'continue': 'CONTINUE',
         'break': 'BREAK',
+        'spawn': 'SPAWN',
+        'yield': 'YIELD',
 }
 punctuation = {
         '.': 'DOT',
