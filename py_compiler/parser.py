@@ -148,7 +148,7 @@ class LValue:
         }[self.options['args']]
         return self.bytecode.append(Linkable(bytes([OPCODES[dup_mapped]]))).append(Linkable(self.options['get'])).append(value.get()).append(Linkable(bytes([OPCODES[op]]))).append(Linkable(self.options['set']))
 
-    def del_(self, value):
+    def del_(self):
         return self.bytecode.append(Linkable(self.options['del']))
 
 OPTIONS_IDENT = {

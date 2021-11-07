@@ -1,7 +1,6 @@
 #include "dict.h"
 #include "errors.h"
 
-#include <stdlib.h>
 #include <stdbool.h>
 
 typedef struct LookupResult {
@@ -15,7 +14,7 @@ typedef struct LookupResult {
 	bool success;
 } LookupResult;
 
-void dict_destruct(DictCore *dict) {
+void dict_destruct(DictCore *dict, dealloc_t dealloc) {
 	if (!dict->buckets) {
 		return;
 	}
@@ -23,11 +22,13 @@ void dict_destruct(DictCore *dict) {
 		DictChain *next;
 		while ((next = dict->buckets[bucket].next)) {
 			dict->buckets[bucket].next = next->next;
-			free(next);
+			dealloc(next, sizeof(DictChain));
 		}
 	}
-	free(dict->buckets);
+	dealloc(dict->buckets, sizeof(DictChain) * dict->cap);
 	dict->buckets = NULL;
+	dict->cap = 0;
+	dict->len = 0;
 }
 
 void dict_construct(DictCore *dict) {
@@ -99,33 +100,33 @@ LookupResult dict_lookup(DictCore *dict, void *key, hash_func_t hash_func, equal
 	};
 }
 
-bool dict_expand(DictCore *dict, hash_func_t hash_func) {
+bool dict_expand(DictCore *dict, hash_func_t hash_func, alloc_t alloc, dealloc_t dealloc) {
 	DictCore temp;
 	dict_construct(&temp);
 	temp.cap = dict->cap * 2 + 3;
-	temp.buckets = calloc(sizeof(DictChain), temp.cap);
+	temp.buckets = alloc(sizeof(DictChain) * temp.cap);
 	if (!temp.buckets) {
 		return false;
 	}
 
 	for (size_t bucket = 0; bucket < dict->cap; bucket++) {
 		for (DictChain *cur = &dict->buckets[bucket]; cur && cur->key; cur = cur->next) {
-			if (!dict_set(&temp, cur->key, cur->val, hash_func, NULL)) {
-				dict_destruct(&temp);
+			if (!dict_set(&temp, cur->key, cur->val, hash_func, NULL, alloc, dealloc)) {
+				dict_destruct(&temp, dealloc);
 				return false;
 			}
 		}
 	}
 
 	// who needs c++?
-	dict_destruct(dict);
+	dict_destruct(dict, dealloc);
 	*dict = temp;
 	return true;
 }
 
-bool dict_set(DictCore *dict, void *key, void *val, hash_func_t hash_func, equality_func_t equality_func) {
+bool dict_set(DictCore *dict, void *key, void *val, hash_func_t hash_func, equality_func_t equality_func, alloc_t alloc, dealloc_t dealloc) {
 	if (dict->len >= dict->cap) {
-		if (!dict_expand(dict, hash_func)) {
+		if (!dict_expand(dict, hash_func, alloc, dealloc)) {
 			return false;
 		}
 	}
@@ -162,7 +163,7 @@ bool dict_set(DictCore *dict, void *key, void *val, hash_func_t hash_func, equal
 
 	DictChain **link;
 	for (link = &dict->buckets[bucket].next; *link; link = &(*link)->next);
-	*link = malloc(sizeof(DictChain));
+	*link = alloc(sizeof(DictChain));
 	if (!*link) {
 		error = (Object*)&MemoryError_inst;
 		return false;
@@ -198,12 +199,12 @@ GetResult dict_get(DictCore *dict, void *key, hash_func_t hash_func, equality_fu
 	};
 }
 
-void lookup_pop(LookupResult *lookup) {
+void lookup_pop(LookupResult *lookup, dealloc_t dealloc) {
 	if (lookup->is_first) {
 		if (lookup->found.foundFirst->next) {
 			DictChain *save = lookup->found.foundFirst->next;
 			*lookup->found.foundFirst = *save;
-			free(save);
+			dealloc(save, sizeof(DictChain));
 		} else {
 			lookup->found.foundFirst->key = NULL;
 			lookup->found.foundFirst->val = NULL;
@@ -213,7 +214,7 @@ void lookup_pop(LookupResult *lookup) {
 		DictChain *save = *lookup->found.foundNext;
 		*lookup->found.foundNext = save->next;
 		lookup->found_any = *lookup->found.foundNext != NULL;
-		free(save);
+		dealloc(save, sizeof(DictChain));
 	}
 }
 
@@ -243,7 +244,7 @@ void *lookup_val(LookupResult *lookup) {
 	}
 }
 
-GetResult dict_pop(DictCore *dict, void *key, hash_func_t hash_func, equality_func_t equality_func) {
+GetResult dict_pop(DictCore *dict, void *key, hash_func_t hash_func, equality_func_t equality_func, dealloc_t dealloc) {
 	LookupResult lookup = dict_lookup(dict, key, hash_func, equality_func);
 	if (!lookup.success) {
 		return (GetResult) {
@@ -264,7 +265,7 @@ GetResult dict_pop(DictCore *dict, void *key, hash_func_t hash_func, equality_fu
 		.found = true,
 		.success = true,
 	};
-	lookup_pop(&lookup);
+	lookup_pop(&lookup, dealloc);
 
 	dict->len--;
 	dict->generation++;
@@ -287,7 +288,7 @@ bool dict_trace(DictCore *dict, bool (*tracer)(void *key, void **val)) {
 	return true;
 }
 
-bool dict_popwhere(DictCore *dict, bool (*predicate)(void *key, void *val)) {
+bool dict_popwhere(DictCore *dict, bool (*predicate)(void *key, void *val), dealloc_t dealloc) {
 	for (size_t bucket = 0; bucket < dict->cap; bucket++) {
 		LookupResult iter = {
 			.found.foundFirst = &dict->buckets[bucket],
@@ -303,7 +304,7 @@ bool dict_popwhere(DictCore *dict, bool (*predicate)(void *key, void *val)) {
 				return false;
 			}
 			if (check) {
-				lookup_pop(&iter);
+				lookup_pop(&iter, dealloc);
 				dict->len--;
 				dict->generation++;
 			} else {
@@ -312,4 +313,16 @@ bool dict_popwhere(DictCore *dict, bool (*predicate)(void *key, void *val)) {
 		}
 	}
 	return true;
+}
+
+size_t dict_size(DictCore *dict) {
+	// we don't need to return any of the stuff which is part of the DictCore struct
+	size_t result = sizeof(DictChain) * dict->cap;
+
+	for (size_t bucket = 0; bucket < dict->cap; bucket++) {
+		for (DictChain *cur = dict->buckets[bucket].next; cur; cur = cur->next) {
+			result += sizeof(DictChain);
+		}
+	}
+	return result;
 }

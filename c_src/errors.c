@@ -16,7 +16,7 @@ BUILTIN_TYPE(ZeroDivisionError, exception, exc_constructor);
 BUILTIN_TYPE(StopIteration, exception, exc_constructor);
 
 ExceptionObject MemoryError_inst = {
-	.header = (ObjectHeader) {
+	.header = {
 		.type = &g_MemoryError,
 		.table = &exc_table,
 	},

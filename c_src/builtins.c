@@ -76,6 +76,7 @@ ObjectTable list_iterator_table = {
 	.set_attr = null_set_attr,
 	.del_attr = null_del_attr,
 	.call = null_call,
+	.size.given = sizeof(ListIterator),
 };
 
 BUILTIN_TYPE(list_iterator, object, null_constructor);
@@ -155,8 +156,14 @@ Object *dict_setitem(TupleObject *args) {
 		return NULL;
 	}
 	DictObject *self = (DictObject*)args->data[0];
+	if (CURRENT_GROUP != self->header.group && !dict_get(&self->core, (void*)args->data[1], object_hasher, object_equals).found) {
+		error = exc_msg(&g_RuntimeError, "Cannot allocate space in another group");
+		return NULL;
+	}
+	void *other_alloc(size_t size) { return quota_alloc(size, self->header.group); }
+	void other_dealloc(void * ptr, size_t size) { quota_dealloc(ptr, size, self->header.group); }
 
-	if (!dict_set(&self->core, (void*)args->data[1], (void*)args->data[2], object_hasher, object_equals)) {
+	if (!dict_set(&self->core, (void*)args->data[1], (void*)args->data[2], object_hasher, object_equals, other_alloc, other_dealloc)) {
 		return NULL;
 	}
 	return (Object*)&g_none;
@@ -173,8 +180,9 @@ Object *dict_popitem(TupleObject *args) {
 		return NULL;
 	}
 	DictObject *self = (DictObject*)args->data[0];
+	void other_dealloc(void * ptr, size_t size) { quota_dealloc(ptr, size, self->header.group); }
 
-	GetResult result = dict_pop(&self->core, (void*)args->data[1], object_hasher, object_equals);
+	GetResult result = dict_pop(&self->core, (void*)args->data[1], object_hasher, object_equals, other_dealloc);
 	if (!result.success) {
 		return NULL;
 	}
@@ -483,6 +491,7 @@ Object *bytes_mul(TupleObject *args) {
 	}
 	return (Object*)result;
 }
+BUILTIN_METHOD(__mul__, bytes_mul, bytes);
 
 Object *bytes_join(TupleObject *args) {
 	if (args->len != 2) {
@@ -841,6 +850,11 @@ Object *list_push(TupleObject *args) {
 		return NULL;
 	}
 	ListObject *self = (ListObject*)args->data[0];
+	if (CURRENT_GROUP != self->header.group) {
+		error = exc_msg(&g_RuntimeError, "Cannot allocate space in another group");
+		return NULL;
+	}
+	void *other_realloc(void * ptr, size_t newsize, size_t oldsize) { return quota_realloc(ptr, newsize, oldsize, self->header.group); }
 	size_t index;
 	if (args->len == 3 && isinstance_inner(args->data[2], &g_int)) {
 		index = convert_index(self->len, ((IntObject*)args->data[1])->value);
@@ -856,7 +870,7 @@ Object *list_push(TupleObject *args) {
 	}
 
 	if (self->len >= self->cap) {
-		Object **new_data = realloc(self->data, sizeof(Object*) * (self->cap + 1) * 2);
+		Object **new_data = other_realloc(self->data, sizeof(Object*) * (self->cap + 1) * 2, sizeof(Object*) * self->cap);
 		if (new_data == NULL) {
 			error = (Object*)&MemoryError_inst;
 			return NULL;
@@ -1190,6 +1204,7 @@ Object *int_hash(TupleObject *args) {
 	// return self?
 	return (Object*)int_raw(((IntObject*)args->data[0])->value);
 }
+BUILTIN_METHOD(__hash__, int_hash, int);
 
 Object *int_gt(TupleObject *args) {
 	if (args->len != 2) {
@@ -1428,6 +1443,7 @@ Object *float_hash(TupleObject *args) {
 	} x = { .d = &((FloatObject*)args->data[0])->value };
 	return (Object*)int_raw(*x.i);
 }
+BUILTIN_METHOD(__hash__, float_hash, float);
 
 Object *float_gt(TupleObject *args) {
 	if (args->len != 2) {
@@ -1555,7 +1571,6 @@ Object *object_hash(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 1 argument");
 		return NULL;
 	}
-
 	return (Object*)int_raw((int64_t)args->data[0]);
 }
 BUILTIN_METHOD(__hash__, object_hash, object);
@@ -1606,7 +1621,10 @@ Object *object_iter(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 1 argument");
 		return NULL;
 	}
-	ListIterator *result = (ListIterator*)gc_malloc(sizeof(ListIterator));
+	ListIterator *result = (ListIterator*)gc_alloc(sizeof(ListIterator));
+	if (result == NULL) {
+		return NULL;
+	}
 	result->header.type = &g_list_iterator;
 	result->header.table = &list_iterator_table;
 	result->child = args->data[0];
@@ -1735,7 +1753,7 @@ BUILTIN_METHOD(join, thread_join, thread);
 
 Object *thread_inject(TupleObject *args) {
 	if (args->len != 2) {
-		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
 	if (!isinstance_inner(args->data[0], &g_thread)) {
@@ -1754,6 +1772,47 @@ Object *thread_inject(TupleObject *args) {
 BUILTIN_METHOD(inject, thread_inject, thread);
 
 BUILTIN_METHOD(__iter__, own_iter, thread);
+
+/////////////////////////////////////
+/// threadgroup methods
+/////////////////////////////////////
+
+Object *threadgroup_str(TupleObject *args) {
+	return (Object*)bytes_unowned_raw("<Threadgroup>", 8, NULL);
+}
+BUILTIN_METHOD(__str__, threadgroup_str, threadgroup);
+
+Object *threadgroup_donate(TupleObject *args) {
+	if (args->len != 2) {
+		error = exc_msg(&g_TypeError, "Expected 2 arguments");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_threadgroup)) {
+		error = exc_msg(&g_TypeError, "Expected threadgroup");
+		return NULL;
+	}
+	if (isinstance_inner(args->data[1], &g_threadgroup)) {
+		error = exc_msg(&g_TypeError, "Do NOT make me think about what this would do @_@");
+		return NULL;
+	}
+
+	if (CURRENT_GROUP != args->data[1]->group) {
+		error = exc_msg(&g_ValueError, "You can't donate an object you don't own!");
+		return NULL;
+	}
+	ThreadGroupObject *new_group = (ThreadGroupObject*)args->data[0];
+	size_t the_size = size(args->data[1]);
+	if (new_group->mem_used + the_size > new_group->mem_limit) {
+		error = (Object*)&MemoryError_inst;
+	}
+
+	// lord have mercy
+	args->data[1]->group->mem_used -= the_size;
+	new_group->mem_used += the_size;
+	args->data[1]->group = new_group;
+	return (Object*)&g_none;
+}
+BUILTIN_METHOD(donate, threadgroup_donate, threadgroup);
 
 /////////////////////////////////////
 /// freestanding functions

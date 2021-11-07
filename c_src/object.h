@@ -10,6 +10,7 @@ typedef struct ObjectHeader Object;
 typedef struct TupleObject TupleObject;
 typedef struct TypeObject TypeObject;
 typedef struct BytesObject BytesObject;
+typedef struct ThreadGroupObject ThreadGroupObject;
 
 typedef struct ObjectTable {
 	bool (*trace)(Object *self, bool (*tracer)(Object *tracee));
@@ -18,11 +19,13 @@ typedef struct ObjectTable {
 	bool (*set_attr)(Object *self, Object *name, Object *value);
 	bool (*del_attr)(Object *self, Object *name);
 	Object *(*call)(Object *self, TupleObject *args);
+	union { size_t given; size_t (*computed)(Object*); } size;
 } ObjectTable;
 
 typedef struct ObjectHeader {
 	ObjectTable *table;
 	TypeObject *type;
+	ThreadGroupObject *group;
 } ObjectHeader;
 
 typedef struct EmptyObject {
@@ -42,6 +45,7 @@ typedef struct DictObject {
 bool dicto_trace(Object *self, bool (*tracer)(Object *tracee));
 void dicto_finalize(Object *self);
 Object *dicto_get_attr(Object *self, Object *name);
+size_t dicto_size(Object *self);
 
 typedef struct BasicObject {
 	DictObject header_dict;
@@ -52,6 +56,7 @@ Object *object_get_attr(Object *self, Object *name);
 bool object_set_attr(Object *self, Object *name, Object *value);
 bool object_del_attr(Object *self, Object *name);
 Object *object_call(Object *self, TupleObject *args);
+size_t object_size(Object *self);
 
 typedef struct TypeObject {
 	BasicObject header_basic;
@@ -61,6 +66,7 @@ typedef struct TypeObject {
 bool type_trace(Object *self, bool (*tracer)(Object *tracee));
 Object *type_get_attr(Object *self, Object *name);
 Object *type_call(Object *self, TupleObject *args);
+size_t type_size(Object *self);
 
 typedef struct IntObject {
 	ObjectHeader header;
@@ -87,6 +93,7 @@ typedef struct ListObject {
 bool list_trace(Object *self, bool (*tracer)(Object *tracee));
 void list_finalize(Object *self);
 Object *list_get_attr(Object *self, Object *name);
+size_t list_size(Object *self);
 
 typedef struct TupleObject {
 	ObjectHeader header;
@@ -95,6 +102,7 @@ typedef struct TupleObject {
 } TupleObject;
 bool tuple_trace(Object *self, bool (*tracer)(Object *tracee));
 Object *tuple_get_attr(Object *self, Object *name);
+size_t tuple_size(Object *self);
 
 typedef struct BytesObject {
 	ObjectHeader header;
@@ -102,6 +110,7 @@ typedef struct BytesObject {
 	char _data[0];
 } BytesObject;
 Object *bytes_get_attr(Object *self, Object *name);
+size_t bytes_size(Object *self);
 
 typedef struct BytesUnownedObject {
 	BytesObject header_bytes;
@@ -151,6 +160,7 @@ bool set_attr_inner(Object *self, char *name, Object *value);
 bool del_attr_inner(Object *self, char *name);
 Object *call(Object *method, TupleObject *args);
 bool trace(Object *self, bool (*tracer)(Object *tracee));
+size_t size(Object *self);
 EqualityResult object_equals(void *_val1, void *_val2);
 HashResult object_hasher(void *val);
 
@@ -216,16 +226,9 @@ bool object_equals_str(Object *obj, char *str);
 
 typedef struct MemberInitEntry {
 	DictObject *self;
-	const char *name;
+	BytesUnownedObject *name;
 	Object *value;
 } MemberInitEntry;
-
-#define ADD_MEMBER(cls, s_name, s_value) \
-static MemberInitEntry static_add_##cls##_##s_value __attribute((used, section("static_member_adds"), aligned(8))) = { \
-	.self = (DictObject*)(&cls), \
-	.name = (s_name), \
-	.value = (Object*)(&s_value), \
-}
 
 #include "gc.h"
 #include "builtins.h"
@@ -238,7 +241,15 @@ BytesUnownedObject var_name = { \
 	.header_bytes.len = sizeof(s_val) - 1, \
 	._data = s_val, \
 };\
-STATIC_OBJECT(var_name);
+STATIC_OBJECT(var_name)
+
+#define ADD_MEMBER(cls, s_name, s_value); \
+INTERNED_STRING(str_static_add_##cls##_##s_value, s_name); \
+static MemberInitEntry static_add_##cls##_##s_value __attribute((used, section("static_member_adds"), aligned(8))) = { \
+	.self = (DictObject*)(&cls), \
+	.name = (&str_static_add_##cls##_##s_value), \
+	.value = (Object*)(&s_value), \
+}
 
 #define BUILTIN_TYPE(s_name, base, cons_func) \
 Object *(cons_func)(Object *self, TupleObject *args); \

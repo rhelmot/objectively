@@ -8,6 +8,10 @@
 #include "gc.h"
 #include "thread.h"
 
+extern DictCore all_objects, roots;
+HashResult gc_hasher(void *val);
+EqualityResult gc_equals(void *val1, void *val2);
+
 int main(int argc, char **argv) {
 	if (argc < 2) {
 		printf("Usage: %s src.olc\n", argv[0]);
@@ -45,6 +49,7 @@ int main(int argc, char **argv) {
 	gc_unroot((Object*)real_main);
 	gc_unroot((Object*)argv_obj);
 
+	int retcode;
 	if (result == NULL) {
 		puts("Program aborted with error");
 		TupleObject *print_args = tuple_raw((Object*[]){error}, 1);
@@ -57,11 +62,21 @@ int main(int argc, char **argv) {
 			puts("Could not convert error to string");
 		}
 		gc_unroot((Object*)print_args);
-		gc_collect();
-		return 1;
+		retcode = 1;
 	} else {
-		int64_t retcode = result->type == &g_int ? ((IntObject*)result)->value : 0;
-		gc_collect();
-		return retcode;
+		retcode = result->type == &g_int ? ((IntObject*)result)->value : 0;
 	}
+	gc_collect();
+	if (root_threadgroup.mem_used != 0) {
+		printf("remaining: %ld\n", root_threadgroup.mem_used);
+		//bool tracer(void *key, void **val) {
+		//	if (!dict_get(&roots, key, gc_hasher, gc_equals).found) {
+		//		printf("%p\n", key);
+		//	}
+		//	return true;
+		//}
+		//dict_trace(&all_objects, tracer);
+		//abort();
+	}
+	return retcode;
 }

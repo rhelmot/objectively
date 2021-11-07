@@ -4,9 +4,68 @@
 #include "gc.h"
 #include "dict.h"
 #include "object.h"
+#include "thread.h"
 
 DictCore all_objects;
 DictCore roots;
+
+void *quota_alloc(size_t size, ThreadGroupObject *group) {
+	if (group->mem_used + size > group->mem_limit) {
+		return NULL;
+	}
+	void *result = calloc(size, 1);
+	if (result == NULL) {
+		return NULL;
+	}
+	group->mem_used += size;
+	return result;
+}
+
+void quota_dealloc(void *ptr, size_t size, ThreadGroupObject *group) {
+	group->mem_used -= size;
+	free(ptr);
+}
+
+void *quota_realloc(void *ptr, size_t newsize, size_t oldsize, ThreadGroupObject *group) {
+	if (group->mem_used - oldsize + newsize > group->mem_limit) {
+		return NULL;
+	}
+	void *result = realloc(ptr, newsize);
+	if (result == NULL) {
+		return NULL;
+	}
+	group->mem_used += newsize - oldsize;
+	return result;
+}
+
+void *current_thread_alloc(size_t size) {
+	if (oly_thread == NULL) {
+		return global_alloc(size);
+	}
+	return quota_alloc(size, CURRENT_GROUP);
+}
+
+void current_thread_dealloc(void *ptr, size_t size) {
+	if (oly_thread == NULL) {
+		abort();
+	}
+	quota_dealloc(ptr, size, CURRENT_GROUP);
+}
+
+void *current_thread_realloc(void *ptr, size_t newsize, size_t oldsize) {
+	if (oly_thread == NULL) {
+		abort();
+	}
+	return quota_realloc(ptr, newsize, oldsize, CURRENT_GROUP);
+}
+
+void *global_alloc(size_t size) {
+	return calloc(size, 1);
+}
+
+void global_dealloc(void *ptr, size_t size) {
+	free(ptr);
+}
 
 HashResult gc_hasher(void *val) {
 	return (HashResult) {
@@ -23,7 +82,7 @@ EqualityResult gc_equals(void *val1, void *val2) {
 }
 
 bool gc_add(Object *obj) {
-	return dict_set(&all_objects, obj, NULL, gc_hasher, gc_equals);
+	return dict_set(&all_objects, obj, NULL, gc_hasher, gc_equals, global_alloc, global_dealloc);
 }
 
 extern Object *__start_static_objects;
@@ -35,14 +94,15 @@ void gc_init() {
 	}
 }
 
-Object *gc_malloc(size_t size) {
-	Object *result = calloc(size, 1);
+Object *gc_alloc(size_t size) {
+	Object *result = current_thread_alloc(size);
 	if (!result) {
 		return NULL;
 	}
 	result->table = NULL;
+	result->group = CURRENT_GROUP;
 	if (!gc_add(result)) {
-		free(result);
+		current_thread_dealloc(result, size);
 		return NULL;
 	}
 	return result;
@@ -73,7 +133,7 @@ bool gc_phase2_2_mark(Object *obj) {
 	}
 
 
-	if (!dict_set(&all_objects, obj, (void*)1, gc_hasher, gc_equals)) {
+	if (!dict_set(&all_objects, obj, (void*)1, gc_hasher, gc_equals, global_alloc, global_dealloc)) {
 		puts("Fatal error: gc could not mark object");
 		abort();
 	}
@@ -95,8 +155,9 @@ bool gc_phase3_finalize(void *key, void **val) {
 }
 
 bool gc_phase4_dispose(void *key, void *val) {
+	Object *object = (Object*)key;
 	if (!val) {
-		free(key);
+		quota_dealloc(object, size(object), object->group);
 		return true;
 	}
 	return false;
@@ -110,7 +171,7 @@ void gc_collect() {
 	// finalize unmarked objects
 	dict_trace(&all_objects, gc_phase3_finalize);
 	// dispose of unmarked objects
-	dict_popwhere(&all_objects, gc_phase4_dispose);
+	dict_popwhere(&all_objects, gc_phase4_dispose, global_dealloc);
 }
 
 void gc_probe() {
@@ -123,12 +184,16 @@ void gc_probe() {
 	}
 }
 
+// TODO this is technically not correct - we need to store a mapping from object to *number of roots*
+// so that if you root an object twice and unroot it once it's still rooted
+// this is notably a problem with the empty tuple
 bool gc_root(Object *obj) {
-	return dict_set(&roots, obj, NULL, gc_hasher, gc_equals);
+	bool result = dict_set(&roots, obj, NULL, gc_hasher, gc_equals, global_alloc, global_dealloc);
+	return result;
 }
 
 bool gc_unroot(Object *obj) {
-	GetResult result = dict_pop(&roots, obj, gc_hasher, gc_equals);
+	GetResult result = dict_pop(&roots, obj, gc_hasher, gc_equals, global_dealloc);
 	if (!result.success) {
 		puts("This should never happen");
 		abort();

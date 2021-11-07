@@ -12,6 +12,8 @@ typedef enum ThreadStatus {
 	EXCEPTED,
 } ThreadStatus;
 
+typedef struct ThreadGroupObject ThreadGroupObject;
+
 typedef struct ThreadObject {
 	ObjectHeader header;
 	pthread_t tid;
@@ -22,14 +24,27 @@ typedef struct ThreadObject {
 	ExceptionObject *injected;
 } ThreadObject;
 
+typedef struct ThreadGroupObject {
+	ObjectHeader header;
+	uint64_t mem_limit;
+	uint64_t mem_used;
+	uint64_t yield_interval; // could be a time interval in the future
+} ThreadGroupObject;
+
 extern TypeObject g_thread;
+extern TypeObject g_threadgroup;
+extern ThreadObject root_thread;
+extern ThreadGroupObject root_threadgroup;
 bool thread_trace(Object *self, bool (*tracer)(Object *tracee));
 Object *thread_get_attr(Object *self, Object *name);
 Object* thread_constructor(Object *self, TupleObject *args);
 ThreadObject *thread_raw(Object *target, TupleObject *args, TypeObject *type);
+void threadgroup_finalize(Object *self);
+Object* threadgroup_constructor(Object *self, TupleObject *args);
 
 void gil_yield(void (*sleeper)());
 bool gil_probe();
 bool thread_yield(Object *val);
 
 extern __thread ThreadObject *oly_thread;
+#define CURRENT_GROUP (oly_thread->header.group)

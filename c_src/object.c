@@ -6,6 +6,7 @@
 #include "gc.h"
 #include "errors.h"
 #include "interpreter.h"
+#include "thread.h"
 
 // tables and instances
 ObjectTable null_table = {
@@ -15,6 +16,7 @@ ObjectTable null_table = {
 	.set_attr = null_set_attr,
 	.del_attr = null_del_attr,
 	.call = null_call,
+	.size.given = sizeof(EmptyObject),
 };
 ObjectTable dicto_table = {
 	.trace = dicto_trace,
@@ -23,6 +25,7 @@ ObjectTable dicto_table = {
 	.set_attr = null_set_attr,
 	.del_attr = null_del_attr,
 	.call = null_call,
+	.size.computed = dicto_size,
 };
 ObjectTable object_table = {
 	.trace = object_trace,
@@ -31,6 +34,7 @@ ObjectTable object_table = {
 	.set_attr = object_set_attr,
 	.del_attr = object_del_attr,
 	.call = object_call,
+	.size.computed = object_size,
 };
 ObjectTable type_table = {
 	.trace = type_trace,
@@ -39,6 +43,7 @@ ObjectTable type_table = {
 	.set_attr = null_set_attr,
 	.del_attr = null_del_attr,
 	.call = type_call,
+	.size.computed = type_size,
 };
 ObjectTable int_table = {
 	.trace = null_trace,
@@ -47,6 +52,7 @@ ObjectTable int_table = {
 	.set_attr = null_set_attr,
 	.del_attr = null_del_attr,
 	.call = null_call,
+	.size.given = sizeof(IntObject),
 };
 ObjectTable float_table = {
 	.trace = null_trace,
@@ -55,6 +61,7 @@ ObjectTable float_table = {
 	.set_attr = null_set_attr,
 	.del_attr = null_del_attr,
 	.call = null_call,
+	.size.given = sizeof(FloatObject),
 };
 ObjectTable list_table = {
 	.trace = list_trace,
@@ -63,6 +70,7 @@ ObjectTable list_table = {
 	.set_attr = null_set_attr,
 	.del_attr = null_del_attr,
 	.call = null_call,
+	.size.computed = list_size,
 };
 ObjectTable tuple_table = {
 	.trace = tuple_trace,
@@ -71,6 +79,7 @@ ObjectTable tuple_table = {
 	.set_attr = null_set_attr,
 	.del_attr = null_del_attr,
 	.call = null_call,
+	.size.computed = tuple_size,
 };
 ObjectTable bytes_table = {
 	.trace = null_trace,
@@ -79,6 +88,7 @@ ObjectTable bytes_table = {
 	.set_attr = null_set_attr,
 	.del_attr = null_del_attr,
 	.call = null_call,
+	.size.computed = bytes_size,
 };
 ObjectTable bytes_unowned_table = {
 	.trace = bytes_unowned_trace,
@@ -87,6 +97,7 @@ ObjectTable bytes_unowned_table = {
 	.set_attr = null_set_attr,
 	.del_attr = null_del_attr,
 	.call = null_call,
+	.size.given = sizeof(BytesUnownedObject),
 };
 ObjectTable builtinfunction_table = {
 	.trace = null_trace,
@@ -95,6 +106,7 @@ ObjectTable builtinfunction_table = {
 	.set_attr = null_set_attr,
 	.del_attr = null_del_attr,
 	.call = builtinfunction_call,
+	.size.given = sizeof(BuiltinFunctionObject),
 };
 ObjectTable closure_table = {
 	.trace = closure_trace,
@@ -103,6 +115,7 @@ ObjectTable closure_table = {
 	.set_attr = null_set_attr,
 	.del_attr = null_del_attr,
 	.call = closure_call,
+	.size.given = sizeof(ClosureObject),
 };
 ObjectTable boundmeth_table = {
 	.trace = boundmeth_trace,
@@ -111,6 +124,7 @@ ObjectTable boundmeth_table = {
 	.set_attr = null_set_attr,
 	.del_attr = null_del_attr,
 	.call = boundmeth_call,
+	.size.given = sizeof(BoundMethodObject),
 };
 ObjectTable slice_table = {
 	.trace = slice_trace,
@@ -119,6 +133,7 @@ ObjectTable slice_table = {
 	.set_attr = null_set_attr,
 	.del_attr = null_del_attr,
 	.call = null_call,
+	.size.given = sizeof(SliceObject),
 };
 ObjectTable exc_table = {
 	.trace = exc_trace,
@@ -127,6 +142,7 @@ ObjectTable exc_table = {
 	.set_attr = null_set_attr,
 	.del_attr = null_del_attr,
 	.call = null_call,
+	.size.given = sizeof(ExceptionObject),
 };
 
 // builtin type class instances
@@ -134,10 +150,8 @@ ObjectTable exc_table = {
 
 Object *object_constructor(Object *self, TupleObject *args);
 TypeObject g_object = {
-	.header_basic.header_dict.header = {
-		.table = &type_table,
-		.type = &g_type,
-	},
+	.header_basic.header_dict.header.table = &type_table,
+	.header_basic.header_dict.header.type = &g_type,
 	.base_class = NULL,
 	.constructor = object_constructor,
 };
@@ -160,34 +174,26 @@ BUILTIN_TYPE(slice, object, slice_constructor);
 BUILTIN_TYPE(exception, object, exc_constructor);
 
 EmptyObject g_none = {
-	.header = (ObjectHeader) {
-		.type = &g_nonetype,
-		.table = &null_table,
-	},
+	.header.type = &g_nonetype,
+	.header.table = &null_table,
 };
 STATIC_OBJECT(g_none);
 ADD_MEMBER(builtins, "none", g_none);
 EmptyObject g_true = {
-	.header = (ObjectHeader) {
-		.type = &g_bool,
-		.table = &null_table,
-	},
+	.header.type = &g_bool,
+	.header.table = &null_table,
 };
 STATIC_OBJECT(g_true);
 ADD_MEMBER(builtins, "true", g_true);
 EmptyObject g_false = {
-	.header = (ObjectHeader) {
-		.type = &g_bool,
-		.table = &null_table,
-	},
+	.header.type = &g_bool,
+	.header.table = &null_table,
 };
 STATIC_OBJECT(g_false);
 ADD_MEMBER(builtins, "false", g_false);
 TupleObject empty_tuple = {
-	.header = (ObjectHeader) {
-		.type = &g_tuple,
-		.table = &tuple_table,
-	},
+	.header.type = &g_tuple,
+	.header.table = &tuple_table,
 	.len = 0,
 };
 STATIC_OBJECT(empty_tuple);
@@ -216,15 +222,13 @@ Object *null_call(Object *self, TupleObject *args) {
 }
 
 IntObject *int_raw(int64_t value) {
-	IntObject *result = (IntObject *)gc_malloc(sizeof(IntObject));
+	IntObject *result = (IntObject *)gc_alloc(sizeof(IntObject));
 	if (!result) {
 		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
-	result->header = (ObjectHeader) {
-		.table = &int_table,
-		.type = &g_int,
-	};
+	result->header.table = &int_table;
+	result->header.type = &g_int;
 	result->value = value;
 	return result;
 }
@@ -243,15 +247,13 @@ EmptyObject *bool_raw(bool value) {
 }
 
 FloatObject *float_raw(double value) {
-	FloatObject *result = (FloatObject*)gc_malloc(sizeof(IntObject));
+	FloatObject *result = (FloatObject*)gc_alloc(sizeof(IntObject));
 	if (!result) {
 		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
-	result->header = (ObjectHeader) {
-		.table = &float_table,
-		.type = &g_float,
-	};
+	result->header.table = &float_table;
+	result->header.type = &g_float;
 	result->value = value;
 	return result;
 }
@@ -266,21 +268,19 @@ FloatObject *float_raw_ex(double value, TypeObject *type) {
 }
 
 ListObject *list_raw(Object **data, size_t len) {
-	ListObject *result = (ListObject*)gc_malloc(sizeof(ListObject));
+	ListObject *result = (ListObject*)gc_alloc(sizeof(ListObject));
 	if (!result) {
 		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
-	result->header = (ObjectHeader) {
-		.type = &g_list,
-		.table = &list_table,
-	};
+	result->header.type = &g_list;
+	result->header.table = &list_table;
 	result->len = len;
 	result->cap = len;
-	result->data = malloc(sizeof(Object*) * len);
+	result->data = current_thread_alloc(sizeof(Object*) * len);
 	if (!result->data) {
 		error = (Object*)&MemoryError_inst;
-		free(result);
+		current_thread_dealloc(result, sizeof(ListObject));
 		return NULL;
 	}
 	memcpy(result->data, data, sizeof(Object*) * len);
@@ -300,15 +300,13 @@ TupleObject *tuple_raw(Object **data, size_t len) {
 	if (len == 0) {
 		return &empty_tuple;
 	}
-	TupleObject *result = (TupleObject*)gc_malloc(sizeof(TupleObject) + sizeof(Object*) * len);
+	TupleObject *result = (TupleObject*)gc_alloc(sizeof(TupleObject) + sizeof(Object*) * len);
 	if (!result) {
 		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
-	result->header = (ObjectHeader) {
-		.type = &g_tuple,
-		.table = &tuple_table,
-	};
+	result->header.type = &g_tuple;
+	result->header.table = &tuple_table;
 	result->len = len;
 	if (data != NULL) {
 		memcpy(result->data, data, sizeof(Object*) * len);
@@ -318,15 +316,13 @@ TupleObject *tuple_raw(Object **data, size_t len) {
 
 TupleObject *tuple_raw_ex(Object **data, size_t len, TypeObject *type) {
 	// duplicated logic to avoid the empty_tuple singleton
-	TupleObject *result = (TupleObject*)gc_malloc(sizeof(TupleObject) + sizeof(Object*) * len);
+	TupleObject *result = (TupleObject*)gc_alloc(sizeof(TupleObject) + sizeof(Object*) * len);
 	if (!result) {
 		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
-	result->header = (ObjectHeader) {
-		.type = type,
-		.table = &tuple_table,
-	};
+	result->header.type = type;
+	result->header.table = &tuple_table;
 	result->len = len;
 	if (data != NULL) {
 		memcpy(result->data, data, sizeof(Object*) * len);
@@ -335,15 +331,13 @@ TupleObject *tuple_raw_ex(Object **data, size_t len, TypeObject *type) {
 }
 
 BytesObject *bytes_raw(const char *data, size_t len) {
-	BytesObject *result = (BytesObject*)gc_malloc(sizeof(BytesObject) + len * sizeof(char));
+	BytesObject *result = (BytesObject*)gc_alloc(sizeof(BytesObject) + len * sizeof(char));
 	if (!result) {
 		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
-	result->header = (ObjectHeader) {
-		.type = &g_bytes,
-		.table = &bytes_table,
-	};
+	result->header.type = &g_bytes;
+	result->header.table = &bytes_table;
 	result->len = len;
 	if (data != NULL) {
 		memcpy(result->_data, data, len * sizeof(char));
@@ -361,16 +355,14 @@ BytesObject *bytes_raw_ex(const char *data, size_t len, TypeObject *type) {
 }
 
 BytesUnownedObject *bytes_unowned_raw(const char *data, size_t len, Object *owner) {
-	BytesUnownedObject *result = (BytesUnownedObject*)gc_malloc(sizeof(BytesUnownedObject));
+	BytesUnownedObject *result = (BytesUnownedObject*)gc_alloc(sizeof(BytesUnownedObject));
 	if (!result) {
 		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
 
-	result->header_bytes.header = (ObjectHeader) {
-		.type = &g_bytes,
-		.table = &bytes_unowned_table,
-	};
+	result->header_bytes.header.type = &g_bytes;
+	result->header_bytes.header.table = &bytes_unowned_table;
 	result->header_bytes.len = len;
 	result->_data = data;
 	result->owner = owner;
@@ -387,15 +379,13 @@ BytesUnownedObject *bytes_unowned_raw_ex(const char *data, size_t len, Object *o
 }
 
 DictObject *dicto_raw() {
-	DictObject *result = (DictObject *)gc_malloc(sizeof(DictObject));
+	DictObject *result = (DictObject *)gc_alloc(sizeof(DictObject));
 	if (!result) {
 		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
-	result->header = (ObjectHeader) {
-		.type = &g_dict,
-		.table = &dicto_table
-	};
+	result->header.type = &g_dict;
+	result->header.table = &dicto_table;
 	return result;
 }
 
@@ -409,28 +399,24 @@ DictObject *dicto_raw_ex(TypeObject *type) {
 }
 
 BasicObject *object_raw(TypeObject *type) {
-	BasicObject *result = (BasicObject*)gc_malloc(sizeof(BasicObject));
+	BasicObject *result = (BasicObject*)gc_alloc(sizeof(BasicObject));
 	if (!result) {
 		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
-	result->header_dict.header = (ObjectHeader) {
-		.type = type,
-		.table = &object_table,
-	};
+	result->header_dict.header.type = type;
+	result->header_dict.header.table = &object_table;
 	return result;
 }
 
 ClosureObject *closure_raw(BytesObject *bytecode, DictObject *context) {
-	ClosureObject *result = (ClosureObject*)gc_malloc(sizeof(ClosureObject));
+	ClosureObject *result = (ClosureObject*)gc_alloc(sizeof(ClosureObject));
 	if (!result) {
 		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
-	result->header = (ObjectHeader) {
-		.type = &g_closure,
-		.table = &closure_table,
-	};
+	result->header.type = &g_closure;
+	result->header.table = &closure_table;
 	result->bytecode = bytecode;
 	result->context = context;
 	return result;
@@ -446,30 +432,26 @@ ClosureObject *closure_raw_ex(BytesObject *bytecode, DictObject *context, TypeOb
 }
 
 BoundMethodObject *boundmeth_raw(Object *meth, Object *self) {
-	BoundMethodObject *result = (BoundMethodObject*)gc_malloc(sizeof(BoundMethodObject));
+	BoundMethodObject *result = (BoundMethodObject*)gc_alloc(sizeof(BoundMethodObject));
 	if (!result) {
 		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
-	result->header = (ObjectHeader) {
-		.type = &g_boundmeth,
-		.table = &boundmeth_table,
-	};
+	result->header.type = &g_boundmeth;
+	result->header.table = &boundmeth_table;
 	result->method = meth;
 	result->self = self;
 	return result;
 }
 
 SliceObject *slice_raw(Object *start, Object *end) {
-	SliceObject *result = (SliceObject*)gc_malloc(sizeof(SliceObject));
+	SliceObject *result = (SliceObject*)gc_alloc(sizeof(SliceObject));
 	if (!result) {
 		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
-	result->header = (ObjectHeader) {
-		.type = &g_slice,
-		.table = &slice_table,
-	};
+	result->header.type = &g_slice;
+	result->header.table = &slice_table;
 	result->start = start;
 	result->end = end;
 	return result;
@@ -486,15 +468,13 @@ SliceObject *slice_raw_ex(Object *start, Object *end, TypeObject *type) {
 
 
 ExceptionObject *exc_raw(TypeObject *type, TupleObject *args) {
-	ExceptionObject *result = (ExceptionObject*)gc_malloc(sizeof(ExceptionObject));
+	ExceptionObject *result = (ExceptionObject*)gc_alloc(sizeof(ExceptionObject));
 	if (!result) {
 		error = (Object*)&MemoryError_inst;
 		return NULL;
 	}
-	result->header = (ObjectHeader) {
-		.type = type,
-		.table = &exc_table,
-	};
+	result->header.type = type;
+	result->header.table = &exc_table;
 	result->args = args;
 	return result;
 }
@@ -632,6 +612,11 @@ Object *object_constructor(Object *_self, TupleObject *args) {
 	return (Object*)result;
 }
 
+size_t object_size(Object *_self) {
+	BasicObject *self = (BasicObject*)_self;
+	return sizeof(BasicObject) + dict_size(&self->header_dict.core);
+}
+
 bool object_trace(Object *_self, bool (*tracer)(Object *tracee)) {
 	BasicObject *self = (BasicObject*)_self;
 	bool inner_tracer(void *key, void **val) {
@@ -644,7 +629,8 @@ bool object_trace(Object *_self, bool (*tracer)(Object *tracee)) {
 
 void object_finalize(Object *_self) {
 	BasicObject *self = (BasicObject*)_self;
-	dict_destruct(&self->header_dict.core);
+	void other_dealloc(void * ptr, size_t size) { quota_dealloc(ptr, size, self->header_dict.header.group); }
+	dict_destruct(&self->header_dict.core, other_dealloc);
 }
 
 HashResult string_hasher(void *val) {
@@ -683,12 +669,19 @@ Object *object_get_attr(Object *_self, Object *name) {
 
 bool object_set_attr(Object *_self, Object *name, Object *val) {
 	BasicObject *self = (BasicObject*)_self;
-	return dict_set(&self->header_dict.core, (void*)name, (void*)val, object_hasher, object_equals);
+	if (CURRENT_GROUP != self->header_dict.header.group && !dict_get(&self->header_dict.core, (void*)name, object_hasher, object_equals).found) {
+		error = exc_msg(&g_RuntimeError, "Cannot allocate space in another group");
+		return NULL;
+	}
+	void *other_alloc(size_t size) { return quota_alloc(size, self->header_dict.header.group); }
+	void other_dealloc(void * ptr, size_t size) { quota_dealloc(ptr, size, self->header_dict.header.group); }
+	return dict_set(&self->header_dict.core, (void*)name, (void*)val, object_hasher, object_equals, other_alloc, other_dealloc);
 }
 
 bool object_del_attr(Object *_self, Object *name) {
 	BasicObject *self = (BasicObject*)_self;
-	GetResult result = dict_pop(&self->header_dict.core, (void*)name, object_hasher, object_equals);
+	void other_dealloc(void * ptr, size_t size) { quota_dealloc(ptr, size, self->header_dict.header.group); }
+	GetResult result = dict_pop(&self->header_dict.core, (void*)name, object_hasher, object_equals, other_dealloc);
 	if (!result.success) {
 		return false;
 	}
@@ -707,6 +700,11 @@ Object *object_call(Object *_self, TupleObject *args) {
 	return call(method, args);
 }
 
+size_t dicto_size(Object *_self) {
+	DictObject *self = (DictObject*)_self;
+	return sizeof(DictObject) + dict_size(&self->core);
+}
+
 bool dicto_trace(Object *_self, bool (*tracer)(Object *tracee)) {
 	DictObject *self = (DictObject*)_self;
 	bool inner_tracer(void *key, void **val) {
@@ -719,7 +717,8 @@ bool dicto_trace(Object *_self, bool (*tracer)(Object *tracee)) {
 
 void dicto_finalize(Object *_self) {
 	DictObject *self = (DictObject*)_self;
-	dict_destruct(&self->core);
+	void other_dealloc(void * ptr, size_t size) { quota_dealloc(ptr, size, self->header.group); }
+	dict_destruct(&self->core, other_dealloc);
 }
 
 Object *dicto_get_attr(Object *_self, Object *name) {
@@ -750,6 +749,11 @@ Object *tuple_constructor(Object *_self, TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 0 or 1 args");
 		return NULL;
 	}
+}
+
+size_t tuple_size(Object *_self) {
+	TupleObject *self = (TupleObject*)_self;
+	return sizeof(TupleObject) + self->len * sizeof(Object*);
 }
 
 bool tuple_trace(Object *_self, bool (*tracer)(Object *tracee)) {
@@ -792,6 +796,11 @@ Object *list_constructor(Object *_self, TupleObject *args) {
 	}
 }
 
+size_t list_size(Object *_self) {
+	ListObject *self = (ListObject*)_self;
+	return sizeof(ListObject) + sizeof(Object*) * self->cap;
+}
+
 bool list_trace(Object *_self, bool (*tracer)(Object *tracee)) {
 	ListObject *self = (ListObject*)_self;
 	for (size_t i = 0; i < self->len; i++) {
@@ -804,7 +813,7 @@ bool list_trace(Object *_self, bool (*tracer)(Object *tracee)) {
 
 void list_finalize(Object *_self) {
 	ListObject *self = (ListObject*)_self;
-	free(self->data);
+	quota_dealloc(self->data, sizeof(Object*) * self->cap, self->header.group);
 	self->data = NULL;
 	self->len = 0;
 	self->cap = 0;
@@ -843,15 +852,13 @@ Object *type_constructor(Object *self, TupleObject *args) {
 			return NULL;
 		}
 		DictObject *arg2 = (DictObject*)_arg2;
-		TypeObject *result = (TypeObject*)gc_malloc(sizeof(TypeObject));
-		result->header_basic.header_dict.header = (ObjectHeader) {
-			.table = &type_table,
-			.type = (TypeObject*)self,
-		};
+		TypeObject *result = (TypeObject*)gc_alloc(sizeof(TypeObject));
+		result->header_basic.header_dict.header.table = &type_table;
+		result->header_basic.header_dict.header.type = (TypeObject*)self;
 		result->base_class = (TypeObject*)_arg1,
 		result->constructor = result->base_class->constructor;
 		bool inner_tracer(void *key, void **val) {
-			return dict_set(&result->header_basic.header_dict.core, key, *val, object_hasher, object_equals);
+			return dict_set(&result->header_basic.header_dict.core, key, *val, object_hasher, object_equals, current_thread_alloc, current_thread_dealloc);
 		}
 		dict_trace(&arg2->core, inner_tracer);
 		return (Object*)result;
@@ -859,6 +866,11 @@ Object *type_constructor(Object *self, TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 1 or 2 arguments");
 		return NULL;
 	}
+}
+
+size_t type_size(Object *_self) {
+	TypeObject *self = (TypeObject*)_self;
+	return sizeof(TypeObject) + dict_size(&self->header_basic.header_dict.core);
 }
 
 bool type_trace(Object *_self, bool (*tracer)(Object *tracee)) {
@@ -978,6 +990,11 @@ BytesObject *bytes_constructor_inner(Object *arg) {
 	return (BytesObject*)result;
 }
 
+size_t bytes_size(Object *_self) {
+	BytesObject *self = (BytesObject*)_self;
+	return sizeof(BytesObject) + self->len * sizeof(char);
+}
+
 const char *bytes_data(BytesObject *self) {
 	if (self->header.table == &bytes_unowned_table) {
 		return ((BytesUnownedObject*)self)->_data;
@@ -1046,7 +1063,7 @@ Object *dict_constructor(Object *_self, TupleObject *args) {
 		DictObject *result = dicto_raw_ex(self);
 		gc_root((Object*)result);
 		bool inner_tracer(void *key, void **val) {
-			return dict_set(&result->core, key, *val, object_hasher, object_equals);
+			return dict_set(&result->core, key, *val, object_hasher, object_equals, current_thread_alloc, current_thread_dealloc);
 		}
 		if (!dict_trace(&input->core, inner_tracer)) {
 			gc_unroot((Object*)result);
@@ -1259,10 +1276,20 @@ Object *call(Object *method, TupleObject *args) {
 }
 
 bool trace(Object *self, bool (*tracer)(Object *tracee)) {
-	if (!tracer((Object*)self->type)) {
-		return false;
+	if (!tracer((Object*)self->type)) return false;
+	if (self->group != NULL) {
+		// static objects have no threadgroup since they do not count toward any quota
+		if (!tracer((Object*)self->group)) return false;
 	}
 	return self->table->trace(self, tracer);
+}
+
+size_t size(Object *self) {
+	if (self->table->size.given < 0x1000) {
+		return self->table->size.given;
+	} else {
+		return self->table->size.computed(self);
+	}
 }
 
 HashResult object_hasher(void *val) {
@@ -1334,12 +1361,7 @@ extern MemberInitEntry __start_static_member_adds;
 extern MemberInitEntry __stop_static_member_adds;
 __attribute__((constructor)) void init_static_adds() {
 	for (MemberInitEntry *iter = &__start_static_member_adds; iter != &__stop_static_member_adds; iter++) {
-		BytesUnownedObject *name = bytes_unowned_raw(iter->name, strlen(iter->name), NULL);
-		if (name == NULL) {
-			puts("Fatal error");
-			exit(1);
-		}
-		if (!dict_set(&iter->self->core, (void*)name, (void*)iter->value, object_hasher, object_equals)) {
+		if (!dict_set(&iter->self->core, (void*)iter->name, (void*)iter->value, object_hasher, object_equals, global_alloc, global_dealloc)) {
 			puts("Fatal error");
 			exit(1);
 		}

@@ -1,5 +1,27 @@
-t3 = spawn fn() { i = 0; while i < 10 { yield i; i += 1; } }();
-for elem in t3 {
-	print(elem);
-	t3.inject(StopIteration());
-}
+mut = dict();
+mut[0] = 0;
+target = fn() {
+	print('testing existing key');
+	mut[0] = 1;
+	print('...ok');
+	print('testing new key');
+	mut[1] = 1;
+	print('...ok?');
+};
+
+spawn_donated = fn(target, group) {
+	waiting = list([true]);
+	thread = spawn fn() {
+		while waiting[0] { print('waiting'); }
+		print('done!');
+		target();
+	}();
+	group.donate(thread);
+	waiting[0] = false;
+	print('alright go');
+	return thread;
+};
+
+newgrp = threadgroup(1000*1000, 100);
+t = spawn_donated(target, newgrp);
+t.__next__();
