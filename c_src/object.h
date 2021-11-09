@@ -121,6 +121,14 @@ bool bytes_unowned_trace(Object *self, bool (*tracer)(Object *tracee));
 Object *bytes_unowned_get_attr(Object *self, Object *name);
 const char *bytes_data(BytesObject *self);
 
+typedef struct BytearrayObject {
+	BytesObject header_bytes;
+	size_t cap;
+	char *data;
+} BytearrayObject;
+void bytearray_finalize(Object *self);
+size_t bytearray_size(Object *self);
+
 typedef struct BuiltinFunctionObject {
 	ObjectHeader header;
 	Object * (*func)(TupleObject *args);
@@ -169,6 +177,7 @@ extern TypeObject g_int;
 extern TypeObject g_float;
 extern TypeObject g_bool;
 extern TypeObject g_bytes;
+extern TypeObject g_bytearray;
 extern TypeObject g_dict;
 extern TypeObject g_list;
 extern TypeObject g_tuple;
@@ -191,6 +200,8 @@ extern ObjectTable dicto_table;
 extern ObjectTable bytes_unowned_table;
 extern ObjectTable exc_table;
 extern ObjectTable type_table;
+extern ObjectTable int_table;
+extern ObjectTable object_table;
 
 IntObject *int_raw(int64_t value);
 IntObject *int_raw_ex(int64_t value, TypeObject *type);
@@ -205,6 +216,7 @@ BytesObject *bytes_raw(const char *data, size_t len);
 BytesObject *bytes_raw_ex(const char *data, size_t len, TypeObject *type);
 BytesUnownedObject *bytes_unowned_raw(const char *data, size_t len, Object *owner);
 BytesUnownedObject *bytes_unowned_raw_ex(const char *data, size_t len, Object *owner, TypeObject *type);
+BytearrayObject *bytearray_raw(const char *data, size_t len, TypeObject *type);
 DictObject *dicto_raw();
 DictObject *dicto_raw_ex(TypeObject *type);
 BasicObject *object_raw(TypeObject *type);

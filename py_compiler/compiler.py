@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import sys
 from ply.lex import lex
 from ply.yacc import yacc

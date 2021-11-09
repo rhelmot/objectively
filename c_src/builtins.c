@@ -4,37 +4,17 @@
 #include <stdarg.h>
 #include <time.h>
 
+#include "builtins.h"
 #include "object.h"
 #include "gc.h"
 #include "errors.h"
 #include "thread.h"
 
-#define BUILTIN_METHOD(name, function, cls) \
-BuiltinFunctionObject g_##cls##_##name = { \
-	.header = { \
-		.type = &g_builtin, \
-		.table = &builtinfunction_table, \
-	}, \
-	.func = function, \
-}; \
-STATIC_OBJECT(g_##cls##_##name); \
-ADD_MEMBER(g_##cls, #name, g_##cls##_##name)
-
-#define BUILTIN_FUNCTION(name, function) \
-BuiltinFunctionObject g_##name = { \
-	.header = { \
-		.type = &g_builtin, \
-		.table = &builtinfunction_table, \
-	}, \
-	.func = function, \
-}; \
-STATIC_OBJECT(g_##name); \
-ADD_MEMBER(builtins, #name, g_##name)
-
 DictObject builtins = {
 	.header = {
 		.table = &dicto_table,
 		.type = &g_dict,
+		.group = &root_threadgroup,
 	},
 };
 STATIC_OBJECT(builtins);
@@ -331,7 +311,8 @@ Object *bytes_eq(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (!isinstance_inner(args->data[0], &g_bytes )|| !isinstance_inner(args->data[1], &g_bytes)) {
+	if ((!isinstance_inner(args->data[0], &g_bytes) && !isinstance_inner(args->data[0], &g_bytearray)) || 
+	    (!isinstance_inner(args->data[1], &g_bytes) && !isinstance_inner(args->data[1], &g_bytearray))) {
 		return (Object*)bool_raw(false);
 	}
 
@@ -344,10 +325,15 @@ Object *bytes_eq(TupleObject *args) {
 	return (Object*)bool_raw(memcmp(bytes_data(self), bytes_data(other), self->len) == 0);
 }
 BUILTIN_METHOD(__eq__, bytes_eq, bytes);
+BUILTIN_METHOD(__eq__, bytes_eq, bytearray);
 
 Object *bytes_hash(TupleObject *args) {
 	if (args->len != 1) {
 		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	if (isinstance_inner(args->data[0], &g_bytearray)) {
+		error = exc_msg(&g_TypeError, "Unhashable");
 		return NULL;
 	}
 	if (!isinstance_inner(args->data[0], &g_bytes)) {
@@ -365,13 +351,14 @@ Object *bytes_hash(TupleObject *args) {
 	return (Object*)int_raw((int64_t)result);
 }
 BUILTIN_METHOD(__hash__, bytes_hash, bytes);
+BUILTIN_METHOD(__hash__, bytes_hash, bytearray);
 
 Object *bytes_getitem(TupleObject *args) {
 	if (args->len != 2) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (!isinstance_inner(args->data[0], &g_bytes)) {
+	if (!isinstance_inner(args->data[0], &g_bytes) && !isinstance_inner(args->data[0], &g_bytearray)) {
 		error = exc_msg(&g_TypeError, "Expected bytes");
 		return NULL;
 	}
@@ -406,20 +393,25 @@ Object *bytes_getitem(TupleObject *args) {
 			error = exc_arg(&g_IndexError, args->data[1]);
 			return NULL;
 		}
-		return (Object*)bytes_unowned_raw_ex(bytes_data(self) + start, end - start, (Object*)self, self->header.type);
+		if (isinstance_inner((Object*)self, &g_bytearray)) {
+			return (Object*)bytearray_raw(bytes_data(self) + start, end - start, self->header.type);
+		} else {
+			return (Object*)bytes_unowned_raw_ex(bytes_data(self) + start, end - start, (Object*)self, self->header.type);
+		}
 	} else {
 		error = exc_msg(&g_TypeError, "Expected int or slice");
 		return NULL;
 	}
 }
 BUILTIN_METHOD(__getitem__, bytes_getitem, bytes);
+BUILTIN_METHOD(__getitem__, bytes_getitem, bytearray);
 
 Object *bytes_bool(TupleObject *args) {
 	if (args->len != 1) {
 		error = exc_msg(&g_TypeError, "Expected 1 argument");
 		return NULL;
 	}
-	if (!isinstance_inner(args->data[0], &g_bytes)) {
+	if (!isinstance_inner(args->data[0], &g_bytes) && !isinstance_inner(args->data[0], &g_bytearray)) {
 		error = exc_msg(&g_TypeError, "Expected bytes");
 		return NULL;
 	}
@@ -427,6 +419,7 @@ Object *bytes_bool(TupleObject *args) {
 	return (Object*)bool_raw(self->len != 0);
 }
 BUILTIN_METHOD(__bool__, bytes_bool, bytes);
+BUILTIN_METHOD(__bool__, bytes_bool, bytearray);
 
 Object *bytes_str(TupleObject *args) {
 	if (args->len != 1) {
@@ -446,13 +439,19 @@ Object *bytes_add(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (!isinstance_inner(args->data[0], &g_bytes )|| !isinstance_inner(args->data[1], &g_bytes)) {
+	if ((!isinstance_inner(args->data[0], &g_bytes) && !isinstance_inner(args->data[0], &g_bytearray)) ||
+	    (!isinstance_inner(args->data[1], &g_bytes) && !isinstance_inner(args->data[1], &g_bytearray))) {
 		error = exc_msg(&g_TypeError, "Expected bytes");
 		return NULL;
 	}
 	BytesObject *self = (BytesObject*)args->data[0];
 	BytesObject *other = (BytesObject*)args->data[1];
-	BytesObject *result = bytes_raw_ex(NULL, self->len + other->len, self->header.type);
+	BytesObject *result;
+	if (isinstance_inner(args->data[0], &g_bytearray)) {
+		result = (BytesObject*)bytearray_raw(NULL, self->len + other->len, self->header.type);
+	} else {
+		result = bytes_raw_ex(NULL, self->len + other->len, self->header.type);
+	}
 	if (result == NULL) {
 		return NULL;
 	}
@@ -461,13 +460,14 @@ Object *bytes_add(TupleObject *args) {
 	return (Object*)result;
 }
 BUILTIN_METHOD(__add__, bytes_add, bytes);
+BUILTIN_METHOD(__add__, bytes_add, bytearray);
 
 Object *bytes_mul(TupleObject *args) {
 	if (args->len != 2) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
 		return NULL;
 	}
-	if (!isinstance_inner(args->data[0], &g_bytes)) {
+	if (!isinstance_inner(args->data[0], &g_bytes) && !isinstance_inner(args->data[0], &g_bytearray)) {
 		error = exc_msg(&g_TypeError, "Expected bytes");
 		return NULL;
 	}
@@ -482,7 +482,12 @@ Object *bytes_mul(TupleObject *args) {
 		error = exc_msg(&g_ValueError, "Integer overflow");
 		return NULL;
 	}
-	BytesObject *result = bytes_raw_ex(NULL, new_len, self->header.type);
+	BytesObject *result;
+	if (isinstance_inner(args->data[0], &g_bytearray)) {
+		result = (BytesObject*)bytearray_raw(NULL, new_len, self->header.type);
+	} else {
+		result = bytes_raw_ex(NULL, new_len, self->header.type);
+	}
 	if (result == NULL) {
 		return NULL;
 	}
@@ -492,6 +497,7 @@ Object *bytes_mul(TupleObject *args) {
 	return (Object*)result;
 }
 BUILTIN_METHOD(__mul__, bytes_mul, bytes);
+BUILTIN_METHOD(__mul__, bytes_mul, bytearray);
 
 Object *bytes_join(TupleObject *args) {
 	if (args->len != 2) {

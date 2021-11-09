@@ -1,4 +1,4 @@
-SOURCES = thread.c object.c gc.c dict.c builtins.c interpreter.c errors.c main.c
+SOURCES = thread.c object.c gc.c dict.c builtins.c interpreter.c errors.c main.c amd64_syscall.c
 HEADERS = thread.h object.h gc.h dict.h builtins.h interpreter.h errors.h
 CFLAGS ?= -Wall -g
 LFLAGS ?= -lpthread

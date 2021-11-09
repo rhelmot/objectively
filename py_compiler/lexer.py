@@ -74,8 +74,8 @@ for op, name in punctuation.items():
 
 m_LIT_INT = r'[0-9]+(?![\.x])|0x[0-9a-fA-F]+'
 m_LIT_FLOAT = r'([0-9]+\.[0-9]*)|([0-9]*\.[0-9]+)'
-m_LIT_BYTES = r'"([^"\\]*(\\\\|\\"|\\' + "'" + r'|\\n|\\r|\\t|\\x[0-9a-fA-F]{2})*)*"|' + \
-              r"'([^'\\]*(\\\\|\\'|\\" + '"' + r"|\\n|\\r|\\t|\\x[0-9a-fA-F]{2})*)*'"
+m_LIT_BYTES = r'"([^"\\]*(\\.)*)*"|' + \
+              r"'([^'\\]*(\\.)*)*'"
 @TOKEN(m_LIT_INT)
 def t_LIT_INT(t):
     t.value = int(t.value, 0)

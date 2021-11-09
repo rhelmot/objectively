@@ -21,3 +21,28 @@ Object *bytes_join(TupleObject *args);
 Object *builtin_print(TupleObject *args);
 bool isinstance_inner(Object *obj, TypeObject *type);
 void sleep_inner(double time);
+
+#define BUILTIN_METHOD(name, function, cls) \
+BuiltinFunctionObject g_##cls##_##name = { \
+	.header = { \
+		.type = &g_builtin, \
+		.table = &builtinfunction_table, \
+		.group = &root_threadgroup, \
+	}, \
+	.func = function, \
+}; \
+STATIC_OBJECT(g_##cls##_##name); \
+ADD_MEMBER(g_##cls, #name, g_##cls##_##name)
+
+#define BUILTIN_FUNCTION(name, function) \
+BuiltinFunctionObject g_##name = { \
+	.header = { \
+		.type = &g_builtin, \
+		.table = &builtinfunction_table, \
+		.group = &root_threadgroup, \
+	}, \
+	.func = function, \
+}; \
+STATIC_OBJECT(g_##name); \
+ADD_MEMBER(builtins, #name, g_##name)
+

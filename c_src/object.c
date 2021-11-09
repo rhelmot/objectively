@@ -99,6 +99,15 @@ ObjectTable bytes_unowned_table = {
 	.call = null_call,
 	.size.given = sizeof(BytesUnownedObject),
 };
+ObjectTable bytearray_table = {
+	.trace = null_trace,
+	.finalize = bytearray_finalize,
+	.get_attr = bytes_get_attr,
+	.set_attr = null_set_attr,
+	.del_attr = null_del_attr,
+	.call = null_call,
+	.size.computed = bytearray_size,
+};
 ObjectTable builtinfunction_table = {
 	.trace = null_trace,
 	.finalize = null_finalize,
@@ -164,6 +173,7 @@ BUILTIN_TYPE(int, object, int_constructor);
 BUILTIN_TYPE(float, object, float_constructor);
 BUILTIN_TYPE(bool, object, bool_constructor);
 BUILTIN_TYPE(bytes, object, bytes_constructor);
+BUILTIN_TYPE(bytearray, object, bytearray_constructor);
 BUILTIN_TYPE(dict, object, dict_constructor);
 BUILTIN_TYPE(list, object, list_constructor);
 BUILTIN_TYPE(tuple, object, tuple_constructor);
@@ -378,6 +388,29 @@ BytesUnownedObject *bytes_unowned_raw_ex(const char *data, size_t len, Object *o
 	return result;
 }
 
+BytearrayObject *bytearray_raw(const char *data, size_t len, TypeObject *type) {
+	BytearrayObject *result = (BytearrayObject*)gc_alloc(sizeof(BytearrayObject));
+	if (!result) {
+		error = (Object*)&MemoryError_inst;
+		return NULL;
+	}
+
+	result->header_bytes.header.type = type;
+	result->header_bytes.header.table = &bytearray_table;
+	result->header_bytes.len = len;
+	result->data = current_thread_alloc(len);
+	if (result->data == NULL) {
+		current_thread_dealloc(result, sizeof(BytearrayObject));
+		error = (Object*)&MemoryError_inst;
+		return NULL;
+	}
+	if (data != NULL) {
+		memcpy(result->data, data, len);
+	}
+	result->cap = len;
+	return result;
+}
+
 DictObject *dicto_raw() {
 	DictObject *result = (DictObject *)gc_alloc(sizeof(DictObject));
 	if (!result) {
@@ -481,7 +514,7 @@ ExceptionObject *exc_raw(TypeObject *type, TupleObject *args) {
 
 // MAKE SURE YOU FREE THE RESULT OF THIS! IT IS NOT GARBAGE COLLECTED!
 char *c_str(Object *arg) {
-	if (!isinstance_inner(arg, &g_bytes)) {
+	if (!isinstance_inner(arg, &g_bytes) && !isinstance_inner(arg, &g_bytearray)) {
 		error = exc_msg(&g_TypeError, "Cannot use object as string");
 		return NULL;
 	}
@@ -953,7 +986,7 @@ Object *bytes_constructor(Object *_self, TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Expected 0 or 1 arguments");
 		return NULL;
 	}
-	if (isinstance_inner(args->data[0], &g_bytes)) {
+	if (isinstance_inner(args->data[0], &g_bytes) || isinstance_inner(args->data[0], &g_bytearray)) {
 		BytesObject *arg = (BytesObject*)args->data[0];
 		return (Object*)bytes_raw_ex(bytes_data(arg), arg->len, self);
 	}
@@ -998,6 +1031,8 @@ size_t bytes_size(Object *_self) {
 const char *bytes_data(BytesObject *self) {
 	if (self->header.table == &bytes_unowned_table) {
 		return ((BytesUnownedObject*)self)->_data;
+	} else if (self->header.table == &bytearray_table) {
+		return ((BytearrayObject*)self)->data;
 	} else {
 		return self->_data;
 	}
@@ -1011,6 +1046,40 @@ Object *bytes_get_attr(Object *_self, Object *name) {
 
 	error = exc_arg(&g_AttributeError, name);
 	return NULL;
+}
+
+Object *bytearray_constructor(Object *self, TupleObject *args) {
+	if (args->len == 0) {
+		return (Object*)bytearray_raw(NULL, 0, (TypeObject*)self);
+	}
+	if (args->len == 1 && isinstance_inner(args->data[0], &g_int)) {
+		uint64_t size = ((IntObject*)args->data[0])->value;
+		BytearrayObject *result = bytearray_raw(NULL, size, (TypeObject*)self);
+		if (result == NULL) {
+			return NULL;
+		}
+		memset(result->data, 0, size);
+		return (Object*)result;
+	} else if (args->len == 1 && (isinstance_inner(args->data[0], &g_bytes) || isinstance_inner(args->data[0], &g_bytearray))) {
+		BytesObject* arg = (BytesObject*)args->data[0];
+		return (Object*)bytearray_raw(bytes_data(arg), arg->len, (TypeObject*)self);
+	} else {
+		error = exc_msg(&g_TypeError, "Expected 0 or 1 arguments, argument 1 must be int, bytes, or bytearray");
+		return NULL;
+	}
+}
+
+void bytearray_finalize(Object *_self) {
+	BytearrayObject *self = (BytearrayObject*)_self;
+	quota_dealloc(self->data, self->cap, self->header_bytes.header.group);
+	self->data = NULL;
+	self->header_bytes.len = 0;
+	self->cap = 0;
+}
+
+size_t bytearray_size(Object *_self) {
+	BytearrayObject *self = (BytearrayObject*)_self;
+	return sizeof(BytearrayObject) + self->cap;
 }
 
 Object *bool_constructor(Object *self, TupleObject *args) {
