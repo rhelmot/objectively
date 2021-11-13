@@ -14,6 +14,7 @@ extern TypeObject g_TypeError;
 extern TypeObject g_ValueError;
 extern TypeObject g_ZeroDivisionError;
 extern TypeObject g_StopIteration;
+extern TypeObject g_Cancellation;
 
 extern ExceptionObject MemoryError_inst;
 

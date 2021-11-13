@@ -14,6 +14,7 @@ BUILTIN_TYPE(TypeError, exception, exc_constructor);
 BUILTIN_TYPE(ValueError, exception, exc_constructor);
 BUILTIN_TYPE(ZeroDivisionError, exception, exc_constructor);
 BUILTIN_TYPE(StopIteration, exception, exc_constructor);
+BUILTIN_TYPE(Cancellation, exception, exc_constructor);
 
 ExceptionObject MemoryError_inst = {
 	.header = {

@@ -406,6 +406,182 @@ Object *bytes_getitem(TupleObject *args) {
 BUILTIN_METHOD(__getitem__, bytes_getitem, bytes);
 BUILTIN_METHOD(__getitem__, bytes_getitem, bytearray);
 
+Object *bytes_setitem(TupleObject *args) {
+	if (args->len != 3) {
+		error = exc_msg(&g_TypeError, "Expected 3 arguments");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_bytearray)) {
+		error = exc_msg(&g_TypeError, "Expected bytearray");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[2], &g_int)) {
+		error = exc_msg(&g_TypeError, "Expected int");
+		return NULL;
+	}
+	BytearrayObject *self = (BytearrayObject*)args->data[0];
+	IntObject *value = (IntObject*)args->data[2];
+	if (value->value < 0 || value->value > 255) {
+		error = exc_msg(&g_ValueError, "Expected int in range 0-255");
+		return NULL;
+	}
+	if (isinstance_inner(args->data[1], &g_int)) {
+		size_t index = convert_index(self->header_bytes.len, ((IntObject*)args->data[1])->value);
+		if (index >= self->header_bytes.len) {
+			error = exc_arg(&g_IndexError, args->data[1]);
+			return NULL;
+		}
+		self->data[index] = value->value;
+		return (Object*)&g_none;
+	} else {
+		// TODO slices
+		error = exc_msg(&g_TypeError, "Expected int");
+		return NULL;
+	}
+}
+BUILTIN_METHOD(__setitem__, bytes_setitem, bytearray);
+
+Object *bytes_push(TupleObject *args) {
+	if (args->len != 2 && args->len != 3) {
+		error = exc_msg(&g_TypeError, "Expected 2 or 3 arguments");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_bytearray)) {
+		error = exc_msg(&g_TypeError, "Expected bytearray");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[1], &g_int)) {
+		error = exc_msg(&g_TypeError, "Expected int");
+		return NULL;
+	}
+	BytearrayObject *self = (BytearrayObject*)args->data[0];
+	IntObject *value = (IntObject*)args->data[1];
+	if (value->value < 0 || value->value > 255) {
+		error = exc_msg(&g_ValueError, "Expected int in range 0-255");
+		return NULL;
+	}
+	if (CURRENT_GROUP != self->header_bytes.header.group) {
+		error = exc_msg(&g_RuntimeError, "Cannot allocate space in another group");
+		return NULL;
+	}
+	void *other_realloc(void * ptr, size_t newsize, size_t oldsize) { return quota_realloc(ptr, newsize, oldsize, self->header_bytes.header.group); }
+	size_t index;
+	if (args->len == 3 && isinstance_inner(args->data[2], &g_int)) {
+		index = convert_index(self->header_bytes.len, ((IntObject*)args->data[1])->value);
+		if (index > self->header_bytes.len) {
+			error = exc_arg(&g_IndexError, args->data[1]);
+			return NULL;
+		}
+	} else if ((args->len == 3 && args->data[2] == (Object*)&g_none) || args->len == 2) {
+		index = self->header_bytes.len;
+	} else {
+		error = exc_msg(&g_TypeError, "expected nonetype or int"); // is this right?
+		return NULL;
+	}
+
+	if (self->header_bytes.len >= self->cap) {
+		char *new_data = other_realloc(self->data, (self->cap + 1) * 2, self->cap);
+		if (new_data == NULL) {
+			error = (Object*)&MemoryError_inst;
+			return NULL;
+		}
+		self->data = new_data;
+		self->cap = (self->cap + 1) * 2;
+	}
+
+	memmove(&self->data[index], &self->data[index + 1], self->header_bytes.len - index);
+	self->data[index] = value->value;
+	self->header_bytes.len++;
+	return (Object*)&g_none;
+}
+BUILTIN_METHOD(push, bytes_push, bytearray);
+
+Object *bytes_pop(TupleObject *args) {
+	if (args->len != 1 && args->len != 2) {
+		error = exc_msg(&g_TypeError, "Expected 1 or 2 arguments");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_bytearray)) {
+		error = exc_msg(&g_TypeError, "Expected bytearray");
+		return NULL;
+	}
+	BytearrayObject *self = (BytearrayObject*)args->data[0];
+	size_t index;
+	if (args->len == 2 && isinstance_inner(args->data[1], &g_int)) {
+		index = convert_index(self->header_bytes.len, ((IntObject*)args->data[1])->value);
+		if (index >= self->header_bytes.len) {
+			error = exc_arg(&g_IndexError, args->data[1]);
+			return NULL;
+		}
+	} else if ((args->len == 2 && args->data[2] == (Object*)&g_none) || args->len == 1) {
+		if (self->header_bytes.len == 0) {
+			Object *the_int = (Object*)int_raw(-1);
+			if (the_int == NULL) {
+				return NULL;
+			}
+			error = exc_arg(&g_IndexError, the_int);
+			return NULL;
+		}
+		index = self->header_bytes.len - 1;
+	} else {
+		error = exc_msg(&g_TypeError, "Expected int or nonetype");
+		return NULL;
+	}
+
+	IntObject *boxed_result = int_raw(0);
+	if (boxed_result == NULL) {
+		return NULL;
+	}
+	char result = self->data[index];
+	memmove(&self->data[index + 1], &self->data[index], self->header_bytes.len - index - 1);
+	self->header_bytes.len--;
+	boxed_result->value = result;
+	return (Object*)boxed_result;
+}
+BUILTIN_METHOD(pop, bytes_pop, bytearray);
+
+Object *bytes_extend(TupleObject *args) {
+	if (args->len != 2) {
+		error = exc_msg(&g_TypeError, "Expected 2 arguments");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_bytearray)) {
+		error = exc_msg(&g_TypeError, "Expected bytearray");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[1], &g_bytes) && !isinstance_inner(args->data[1], &g_bytearray)) {
+		error = exc_msg(&g_TypeError, "Expected bytes");
+		return NULL;
+	}
+	BytearrayObject *self = (BytearrayObject*)args->data[0];
+	BytesObject *other = (BytesObject*)args->data[1];
+	if (CURRENT_GROUP != self->header_bytes.header.group) {
+		error = exc_msg(&g_RuntimeError, "Cannot allocate space in another group");
+		return NULL;
+	}
+	void *other_realloc(void *ptr, size_t newsize, size_t oldsize) { return quota_realloc(ptr, newsize, oldsize, self->header_bytes.header.group); }
+
+	size_t new_len = self->header_bytes.len + other->len;
+	if (new_len > self->cap) {
+		size_t new_cap = self->cap;
+		while (new_len > new_cap) {
+			new_cap = (new_cap + 1) * 2;
+		}
+		char *new_data = other_realloc(self->data, new_cap, self->cap);
+		if (new_data == NULL) {
+			error = (Object*)&MemoryError_inst;
+			return NULL;
+		}
+		self->data = new_data;
+		self->cap = new_cap;
+	}
+
+	memcpy(&self->data[self->header_bytes.len], bytes_data(other), other->len);
+	self->header_bytes.len += other->len;
+	return (Object*)&g_none;
+}
+BUILTIN_METHOD(extend, bytes_extend, bytearray);
+
 Object *bytes_bool(TupleObject *args) {
 	if (args->len != 1) {
 		error = exc_msg(&g_TypeError, "Expected 1 argument");
@@ -1557,7 +1733,7 @@ Object *object_ne(TupleObject *args) {
 	if (is_eq == NULL) {
 		return NULL;
 	}
-	Object *not = get_attr_inner(args->data[0], "__not__");
+	Object *not = get_attr_inner(is_eq, "__not__");
 	if (not == NULL) {
 		return NULL;
 	}
@@ -1580,6 +1756,7 @@ Object *object_hash(TupleObject *args) {
 	return (Object*)int_raw((int64_t)args->data[0]);
 }
 BUILTIN_METHOD(__hash__, object_hash, object);
+BUILTIN_FUNCTION(id, object_hash);
 
 Object *object_bool(TupleObject *args) {
 	if (args->len != 1) {
@@ -1757,6 +1934,29 @@ Object *thread_join(TupleObject *args) {
 }
 BUILTIN_METHOD(join, thread_join, thread);
 
+Object *thread_wait(TupleObject *args) {
+	if (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_thread)) {
+		error = exc_msg(&g_TypeError, "Expected thread");
+		return NULL;
+	}
+	ThreadObject *self = (ThreadObject*)args->data[0];
+
+	while (self->status != RETURNED && self->status != EXCEPTED) {
+		sleep_inner(0.0000001);
+	}
+
+	if (self->status == EXCEPTED) {
+		error = self->result;
+		return NULL;
+	}
+	return self->result;
+}
+BUILTIN_METHOD(wait, thread_wait, thread);
+
 Object *thread_inject(TupleObject *args) {
 	if (args->len != 2) {
 		error = exc_msg(&g_TypeError, "Expected 2 arguments");
@@ -1801,24 +2001,29 @@ Object *threadgroup_donate(TupleObject *args) {
 		error = exc_msg(&g_TypeError, "Do NOT make me think about what this would do @_@");
 		return NULL;
 	}
-
 	if (CURRENT_GROUP != args->data[1]->group) {
 		error = exc_msg(&g_ValueError, "You can't donate an object you don't own!");
-		return NULL;
+		return false;
 	}
+
 	ThreadGroupObject *new_group = (ThreadGroupObject*)args->data[0];
-	size_t the_size = size(args->data[1]);
+	return donate_inner(new_group, args->data[1]) ? (Object*)&g_none : NULL;
+}
+BUILTIN_METHOD(donate, threadgroup_donate, threadgroup);
+
+bool donate_inner(ThreadGroupObject *new_group, Object *obj) {
+	size_t the_size = size(obj);
 	if (new_group->mem_used + the_size > new_group->mem_limit) {
 		error = (Object*)&MemoryError_inst;
+		return false;
 	}
 
 	// lord have mercy
-	args->data[1]->group->mem_used -= the_size;
+	obj->group->mem_used -= the_size;
 	new_group->mem_used += the_size;
-	args->data[1]->group = new_group;
-	return (Object*)&g_none;
+	obj->group = new_group;
+	return true;
 }
-BUILTIN_METHOD(donate, threadgroup_donate, threadgroup);
 
 /////////////////////////////////////
 /// freestanding functions

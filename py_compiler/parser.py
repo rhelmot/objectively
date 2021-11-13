@@ -366,7 +366,7 @@ def p_expression_4_and(p):
     # pop
     # <expr_2>
     end = object()
-    code = Linkable(bytes([OPCODES['OP_DUP'], OPCODES['OP_NOT'], OPCODES['JUMP_IF'], 0,0,0,0, OPCODES['ST_POP']]), relocations={3: end})
+    code = Linkable(bytes([OPCODES['ST_DUP'], OPCODES['OP_NOT'], OPCODES['JUMP_IF'], 0,0,0,0, OPCODES['ST_POP']]), relocations={3: end})
     p[0].append(code).append(p[3].get())
     p[0].symbols[end] = len(p[0])
 
@@ -374,7 +374,7 @@ def p_expression_4_or(p):
     "expression_4 : expression_4 LOGOR expression_4"
     p[0] = p[1].get()
     end = object()
-    code = Linkable(bytes([OPCODES['OP_DUP'], OPCODES['JUMP_IF'], 0,0,0,0, OPCODES['ST_POP']]), relocations={2: end})
+    code = Linkable(bytes([OPCODES['ST_DUP'], OPCODES['JUMP_IF'], 0,0,0,0, OPCODES['ST_POP']]), relocations={2: end})
     p[0].append(code).append(p[3].get())
     p[0].symbols[end] = len(p[0])
 

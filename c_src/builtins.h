@@ -21,6 +21,7 @@ Object *bytes_join(TupleObject *args);
 Object *builtin_print(TupleObject *args);
 bool isinstance_inner(Object *obj, TypeObject *type);
 void sleep_inner(double time);
+bool donate_inner(ThreadGroupObject *new_group, Object *obj);
 
 #define BUILTIN_METHOD(name, function, cls) \
 BuiltinFunctionObject g_##cls##_##name = { \

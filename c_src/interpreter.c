@@ -188,6 +188,7 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 	Object *result = NULL;
 
 	while (true) {
+#define RESYNC_GROUP() ({ if (stack->header.group != CURRENT_GROUP) { donate_inner(CURRENT_GROUP, (Object*)stack); donate_inner(CURRENT_GROUP, (Object*)locals); donate_inner(CURRENT_GROUP, (Object*)temproot); donate_inner(CURRENT_GROUP, (Object*)trystack); }})
 		while (temproot->len) {
 			if (!list_pop_back_inner(temproot)) {
 				puts("Fatal error: could not pop temproot");
@@ -198,6 +199,8 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 		if (!gil_probe()) {
 			goto ERROR;
 		}
+		// have you been donated? you may qualify for financial compensation
+		RESYNC_GROUP();
 		if (pointer == &bytes_data(closure->bytecode)[closure->bytecode->len]) {
 			result = (Object*)&g_none;
 			break;
@@ -205,7 +208,7 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 		Opcode opcode = next_opcode(closure->bytecode, &pointer);
 		switch (opcode) {
 
-#define CHECK(_val) ({ __typeof__(_val) _evaluated = (_val); if (!_evaluated) { break; } _evaluated; })
+#define CHECK(_val) ({ __typeof__(_val) _evaluated = (_val); if (!_evaluated) { break; } RESYNC_GROUP(); _evaluated; })
 #define POP() ({ Object *_popped = list_pop_back_inner(stack); if (_popped == NULL) { puts("Fatal error: stack underflow"); exit(1); } _popped; })
 #define PUSH(_pushed) ({ if (!list_push_back_inner(stack, (Object*)_pushed)) { break; } })
 #define TEMPROOT(_rooted) ({ if (!list_push_back_inner(temproot, (Object*)_rooted)) { break ; } })
@@ -458,7 +461,12 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 				continue;
 			}
 			case RAISE: {
-				error = POP();
+				Object *val = POP();
+				if (!isinstance_inner(val, &g_exception)) {
+					error = exc_msg(&g_TypeError, "Expected exception");
+					break;
+				}
+				error = val;
 				break;
 			}
 			case RETURN: {
@@ -563,6 +571,10 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 		Object *local_error, *_catch_target;
 ERROR:
 		local_error = error;
+		if (local_error->type == &g_Cancellation) {
+			// can't touch this
+			goto EXIT;
+		}
 		_catch_target = list_pop_back_inner(trystack);
 		if (_catch_target == NULL) {
 			error = local_error;

@@ -38,6 +38,7 @@ ThreadGroupObject root_threadgroup = {
 	.header.group = &root_threadgroup,
 };
 STATIC_OBJECT(root_threadgroup);
+ADD_MEMBER(builtins, "root_threadgroup", root_threadgroup);
 
 ThreadObject root_thread = {
 	.header.type = &g_thread,

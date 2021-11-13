@@ -579,7 +579,7 @@ Object* int_constructor(Object *_self, TupleObject *args) {
 			return (Object*)int_raw_ex(((IntObject*)arg)->value, self);
 		} else if (isinstance_inner(arg, &g_float)) {
 			return (Object*)int_raw_ex((int64_t)((FloatObject*)arg)->value, self);
-		} else if (isinstance_inner(arg, &g_bytes)) {
+		} else if (isinstance_inner(arg, &g_bytes) || isinstance_inner(arg, &g_bytearray)) {
 			return (Object*)bytes2int((BytesObject*)arg, 10, self);
 		} else {
 			error = exc_msg(&g_TypeError, "Expected int, float, or bytes");
@@ -588,7 +588,7 @@ Object* int_constructor(Object *_self, TupleObject *args) {
 	} else if (args->len == 2) {
 		Object *arg0 = args->data[0];
 		Object *arg1 = args->data[1];
-		if (isinstance_inner(arg0, &g_bytes) && isinstance_inner(arg1, &g_int)) {
+		if ((isinstance_inner(arg0, &g_bytes) || isinstance_inner(arg0, &g_bytearray)) && isinstance_inner(arg1, &g_int)) {
 			return (Object*)bytes2int((BytesObject*)arg0, ((IntObject*)arg1)->value, self);
 		} else {
 			error = exc_msg(&g_TypeError, "Expected bytes and int");
@@ -610,7 +610,7 @@ Object *float_constructor(Object *_self, TupleObject *args) {
 			return (Object*)float_raw_ex(((FloatObject*)arg)->value, self);
 		} else if (isinstance_inner(arg, &g_int)) {
 			return (Object*)float_raw_ex((double)((IntObject*)arg)->value, self);
-		} else if (isinstance_inner(arg, &g_bytes)) {
+		} else if (isinstance_inner(arg, &g_bytes) || isinstance_inner(arg, &g_bytearray)) {
 			return (Object*)bytes2float((BytesObject*)arg, self);
 		} else {
 			error = exc_msg(&g_TypeError, "Expected float or int or bytes");
@@ -1280,20 +1280,29 @@ Object *get_attr_inner(Object *self, char *name) {
 }
 Object *get_attr(Object *self, Object *name) {
 	Object *result;
-	result = self->table->get_attr(self, name);
-	if (result != NULL) {
-		return result;
-	}
-	error = NULL;
+	bool check_own = true;
 
-	// is this right?
-	if (self->table == &type_table) {
-		for (TypeObject *type = ((TypeObject*)self)->base_class; type; type = type->base_class) {
-			result = type->header_basic.header_dict.header.table->get_attr((Object*)type, name);
-			if (result != NULL) {
-				return result;
+	// is there a better fucking way to do tihs??????
+	if (name->type == &g_bytes && ((BytesObject*)name)->len >= 2 && bytes_data((BytesObject*)name)[0] == '_' && bytes_data((BytesObject*)name)[1] == '_') {
+		check_own = false;
+	}
+
+	if (check_own) {
+		result = self->table->get_attr(self, name);
+		if (result != NULL) {
+			return result;
+		}
+		error = NULL;
+
+		// is this right?
+		if (self->table == &type_table) {
+			for (TypeObject *type = ((TypeObject*)self)->base_class; type; type = type->base_class) {
+				result = type->header_basic.header_dict.header.table->get_attr((Object*)type, name);
+				if (result != NULL) {
+					return result;
+				}
+				error = NULL;
 			}
-			error = NULL;
 		}
 	}
 	

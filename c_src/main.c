@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <alloca.h>
+#include <signal.h>
 
 #include "builtins.h"
 #include "errors.h"
@@ -13,6 +14,7 @@ HashResult gc_hasher(void *val);
 EqualityResult gc_equals(void *val1, void *val2);
 
 int main(int argc, char **argv) {
+	signal(SIGPIPE, SIG_IGN); // uhhhhhhhhhhh
 	if (argc < 2) {
 		printf("Usage: %s src.olc\n", argv[0]);
 		return 1;
