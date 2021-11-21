@@ -6,9 +6,10 @@ edition = "2018"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+enum_dispatch = "0.3.7"
 lazy_static = "1.4"
-qcell = "0.4.3"
 parking_lot = "0.11.2"
+qcell = "0.4.3"
 shredder_derive = "0.2.0"
 take_mut = "0.2.2"
 

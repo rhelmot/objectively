@@ -7,14 +7,14 @@ use shredder::{Gc, GcGuard, Scan, ToScan};
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::vec::Vec;
-use std::ptr;
 
 use parking_lot::{Mutex, MutexGuard};
 use std::marker::Unsize;
 use std::ops::Deref;
+use enum_dispatch::enum_dispatch;
 
 pub type Object = Gc<GCell<dyn ObjectTrait>>;
-pub type NewObject = Gc<GCell<ObjectStruct>>;
+pub type NewObject = Gc<GCell<ObjectEnum>>;
 pub type GenericResult<T> = Result<T, Exception>;
 pub type NullResult = GenericResult<()>;
 pub type ObjectResult = GenericResult<Object>;
@@ -63,73 +63,76 @@ impl Exception {
     }
 }
 
-pub enum ObjectShape {
-    EmptyShape(),
-    IntShape(i64),
-    FloatShape(f64),
-    BytesShape(Box<[u8]>),
-    VecShape(Vec<Object>),
-    MapShape(HashMap<Object, Object>),
-    AttrShape(HashMap<String, Object>),
-    TypeShape {
-        name: String,
-        base_class: Object,
-        members: HashMap<String, Object>,
-        constructor: &'static ObjectSelfFunction,
+#[enum_dispatch(ObjectTrait)]
+#[derive(Scan)]
+pub enum ObjectEnum {
+    Bool(BoolObject),
+    // Float(FloatObject),
+    Int(IntObject),
+    None(NoneObject),
+    Tuple(TupleObject),
+    Type(TypeObject),
+    Subtype(SubtypeObject),
+}
+
+#[derive(Scan)]
+pub struct SubtypeObject {
+    base: NewObject,
+}
+
+impl ObjectTrait for SubtypeObject {
+    fn get_type(&self) -> Object {
+        todo!()
+    }
+
+    fn as_enum(self) -> ObjectEnum {
+        ObjectEnum::Subtype(self)
     }
 }
 
-impl ObjectShape {
-    pub fn get_attr(&self, attr: &str) -> Option<Object> {
-        match self {
-            ObjectShape::AttrShape(m) => m.get(attr),
-            ObjectShape::TypeShape { members: m, .. } => m.get(attr),
-            _ => None,
-        }
-    }
-}
-
+#[derive(Scan)]
 pub struct ObjectStruct {
     pub type_: Object,
-    pub shape: ObjectShape,
+    pub shape: ObjectEnum,
 }
 
-pub fn get_attr(gil: &mut MutexGuard<GCellOwner>, this: NewObject, attr: &str) -> ObjectResult {
-    let this_unlocked = this.get().ro(gil);
-    if let Some(o) = this_unlocked.shape.get_attr(attr) {
-        return Ok(o);
-    }
+// pub fn get_attr(gil: &mut MutexGuard<GCellOwner>, this: NewObject, attr: &str) -> ObjectResult {
+//     let this_unlocked = this.get().ro(gil);
+//     if let Ok(o) = this_unlocked.get_attr(attr) {
+//         return Ok(o);
+//     }
+//
+//     if let ObjectEnum::TypeShape { base_class: b, .. } = this_unlocked {
+//         let mut b_unlocked = b.get().ro(gil);
+//         loop {
+//             if let ObjectEnum::TypeShape { base_class: next_b, members: m, .. } = b_unlocked {
+//                 if let Some(o) = b_unlocked.shape.get_attr(attr) {
+//                     return Ok(o);
+//                 }
+//                 let next_b_unlocked = next_b.get().ro(gil);
+//                 if ptr::eq(b_unlocked, next_b_unlocked) {
+//                     break;
+//                 }
+//                 b_unlocked = next_b_unlocked;
+//             } else {
+//                 panic!("Type does not have TypeShape");
+//             }
+//         }
+//     }
+//     let type_ = &this_unlocked.type_;
+//     let type_unlocked = type_.get().ro(gil);
+//     loop {
+//         if let ObjectEnum::TypeShape { base_class: next_type, members: m, .. } = type_ {
+//
+//         } else {
+//             panic!("Type does not have TypeShape");
+//         }
+//     }
+//
+//     Err(Exception::attribute_error(attr))
+// }
 
-    if let ObjectShape::TypeShape { base_class: b, .. } = this_unlocked {
-        let mut b_unlocked = b.get().ro(gil);
-        loop {
-            if let ObjectShape::TypeShape { base_class: next_b, members: m, .. } = b_unlocked {
-                if let Some(o) = b_unlocked.shape.get_attr(attr) {
-                    return Ok(o);
-                }
-                let next_b_unlocked = next_b.get().ro(gil);
-                if ptr::eq(b_unlocked, next_b_unlocked) {
-                    break;
-                }
-                b_unlocked = next_b_unlocked;
-            } else {
-                panic!("Type does not have TypeShape");
-            }
-        }
-    }
-    let type_ = &this_unlocked.type_;
-    let type_unlocked = type_.get().ro(gil);
-    loop {
-        if let ObjectShape::TypeShape { base_class: next_type, members: m, .. } = type_ {
-
-        } else {
-            panic!("Type does not have TypeShape");
-        }
-    }
-
-    Err(Exception::attribute_error(attr))
-}
-
+#[enum_dispatch]
 pub trait ObjectTrait: GcDrop + Scan + ToScan + Send + Sync {
     fn get_attr(&self, name: &str) -> ObjectResult {
         Err(Exception::attribute_error(name))
@@ -160,6 +163,7 @@ pub trait ObjectTrait: GcDrop + Scan + ToScan + Send + Sync {
     fn as_bool(&self) -> Option<&BoolObject> {
         None
     }
+    fn as_enum(self) -> ObjectEnum;
 
     fn into_gc(self) -> Object
     where
@@ -268,6 +272,10 @@ impl ObjectTrait for TypeObject {
     fn get_type(&self) -> Object {
         G_TYPE.clone()
     }
+
+    fn as_enum(self) -> ObjectEnum {
+        ObjectEnum::Type(self)
+    }
 }
 
 #[derive(Scan)]
@@ -298,6 +306,10 @@ impl ObjectTrait for TupleObject {
 
     fn as_tuple(&self) -> Option<&TupleObject> {
         Some(self)
+    }
+
+    fn as_enum(self) -> ObjectEnum {
+        ObjectEnum::Tuple(self)
     }
 }
 impl TupleObject {
@@ -332,6 +344,10 @@ impl ObjectTrait for IntObject {
     fn as_int(&self) -> Option<&IntObject> {
         Some(self)
     }
+
+    fn as_enum(self) -> ObjectEnum {
+        ObjectEnum::Int(self)
+    }
 }
 impl IntObject {
     pub fn new(data: i64) -> IntObject {
@@ -350,6 +366,10 @@ impl ObjectTrait for NoneObject {
     fn get_type(&self) -> Object {
         G_NONETYPE.clone()
     }
+
+    fn as_enum(self) -> ObjectEnum {
+        ObjectEnum::None(self)
+    }
 }
 
 #[derive(Scan)]
@@ -363,6 +383,10 @@ impl ObjectTrait for BoolObject {
 
     fn as_bool(&self) -> Option<&BoolObject> {
         Some(self)
+    }
+
+    fn as_enum(self) -> ObjectEnum {
+        ObjectEnum::Bool(self)
     }
 }
 impl BoolObject {
@@ -394,6 +418,9 @@ lazy_static! {
         struct Dummy;
         impl ObjectTrait for Dummy {
             fn get_type(&self) -> Object {
+                unimplemented!("If this is ever called something has gone horribly wrong")
+            }
+            fn as_enum(self) -> ObjectEnum {
                 unimplemented!("If this is ever called something has gone horribly wrong")
             }
         }
