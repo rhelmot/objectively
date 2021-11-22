@@ -1,8 +1,13 @@
-use shredder::marker::{GcDrop, GcSafe};
-use shredder::{Scan, Scanner};
-use std::cell::UnsafeCell;
-use std::ops::{CoerceUnsized, Deref, DerefMut};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::{
+    cell::UnsafeCell,
+    ops::{CoerceUnsized, Deref, DerefMut},
+    sync::atomic::{AtomicBool, Ordering},
+};
+
+use shredder::{
+    marker::{GcDrop, GcSafe},
+    Scan, Scanner,
+};
 
 pub struct GCell<T: ?Sized>(UnsafeCell<T>);
 

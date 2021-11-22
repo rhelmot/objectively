@@ -1,20 +1,15 @@
-use crate::gcell::{GCell, GCellOwner};
-use crate::{builtins, gcell};
-use core::ops::DerefMut;
-use lazy_static::lazy_static;
-use shredder::marker::GcDrop;
-use shredder::{Gc, GcGuard, Scan, ToScan};
-use std::collections::HashMap;
-use std::convert::TryInto;
-use std::vec::Vec;
+use std::{borrow::Borrow, collections::HashMap, convert::TryInto, ops::Deref, vec::Vec};
 
-use parking_lot::{Mutex, MutexGuard};
-use std::marker::Unsize;
-use std::ops::Deref;
 use enum_dispatch::enum_dispatch;
+use lazy_static::lazy_static;
+use parking_lot::{Mutex, MutexGuard};
+use shredder::{marker::GcDrop, Gc, Scan, ToScan};
 
-pub type Object = Gc<GCell<dyn ObjectTrait>>;
-pub type NewObject = Gc<GCell<ObjectEnum>>;
+use crate::{
+    builtins,
+    gcell::{GCell, GCellOwner},
+};
+
 pub type GenericResult<T> = Result<T, Exception>;
 pub type NullResult = GenericResult<()>;
 pub type ObjectResult = GenericResult<Object>;
@@ -63,218 +58,228 @@ impl Exception {
     }
 }
 
-#[enum_dispatch(ObjectTrait)]
+#[enum_dispatch(GcGCellExt)]
+#[derive(Clone, Debug, Scan)]
+pub enum Object {
+    Bool(Gc<GCell<BoolObject>>),
+    Float(Gc<GCell<FloatObject>>),
+    Int(Gc<GCell<IntObject>>),
+    None(Gc<GCell<NoneObject>>),
+    Tuple(Gc<GCell<TupleObject>>),
+    Type(Gc<GCell<TypeObject>>),
+    Subtype(Gc<GCell<SubtypeObject>>),
+}
+
+#[enum_dispatch(ObjectRefTrait)]
+#[derive(Debug)]
+pub enum ObjectRef<'a> {
+    Bool(&'a Gc<GCell<BoolObject>>),
+    Float(&'a Gc<GCell<FloatObject>>),
+    Int(&'a Gc<GCell<IntObject>>),
+    None(&'a Gc<GCell<NoneObject>>),
+    Tuple(&'a Gc<GCell<TupleObject>>),
+    Type(&'a Gc<GCell<TypeObject>>),
+    Subtype(&'a Gc<GCell<SubtypeObject>>),
+}
+
+impl ObjectRef<'_> {
+    fn to_owned(self) -> Object {
+        match self {
+            ObjectRef::Bool(value) => value.clone().into(),
+            ObjectRef::Float(value) => value.clone().into(),
+            ObjectRef::Int(value) => value.clone().into(),
+            ObjectRef::None(value) => value.clone().into(),
+            ObjectRef::Tuple(value) => value.clone().into(),
+            ObjectRef::Type(value) => value.clone().into(),
+            ObjectRef::Subtype(value) => value.clone().into(),
+        }
+    }
+}
+
+#[enum_dispatch]
+pub(crate) trait ObjectRefTrait {}
+
+impl<T: GcGCellExt> ObjectRefTrait for &T {}
+
+impl<'a> From<&'a Object> for ObjectRef<'a> {
+    fn from(object: &'a Object) -> Self {
+        match object {
+            &Object::Bool(ref value) => value.into(),
+            &Object::Float(ref value) => value.into(),
+            &Object::Int(ref value) => value.into(),
+            &Object::None(ref value) => value.into(),
+            &Object::Tuple(ref value) => value.into(),
+            &Object::Type(ref value) => value.into(),
+            &Object::Subtype(ref value) => value.into(),
+        }
+    }
+}
+
 #[derive(Scan)]
-pub enum ObjectEnum {
-    Bool(BoolObject),
-    // Float(FloatObject),
-    Int(IntObject),
-    None(NoneObject),
-    Tuple(TupleObject),
-    Type(TypeObject),
-    Subtype(SubtypeObject),
+pub struct FloatObject {
+    pub(crate) value: f64,
+}
+
+impl FloatObject {
+    pub(crate) fn new(value: f64) -> Self {
+        Self { value }
+    }
+}
+
+impl ObjectTrait for FloatObject {
+    fn get_type(&self) -> ObjectRef<'_> {
+        G_FLOAT.deref().into()
+    }
+
+    // fn into_enum(self) -> ObjectEnum {
+    //     ObjectEnum::Float(self)
+    // }
 }
 
 #[derive(Scan)]
 pub struct SubtypeObject {
-    base: NewObject,
+    base: Object,
+    members: HashMap<String, Object>,
 }
 
 impl ObjectTrait for SubtypeObject {
-    fn get_type(&self) -> Object {
-        todo!()
+    fn get_attr(this: &Gc<GCell<Self>>, name: &str, gil: &GCellOwner) -> ObjectResult {
+        let this = this.get();
+        let this = this.ro(gil);
+
+        if let Some(value) = this.members.get(name) {
+            Ok(value.clone())
+        } else {
+            this.base.get_attr(gil, name)
+        }
     }
 
-    fn as_enum(self) -> ObjectEnum {
-        ObjectEnum::Subtype(self)
+    fn get_type(&self) -> ObjectRef {
+        self.base.borrow().into()
     }
 }
-
-#[derive(Scan)]
-pub struct ObjectStruct {
-    pub type_: Object,
-    pub shape: ObjectEnum,
-}
-
-// pub fn get_attr(gil: &mut MutexGuard<GCellOwner>, this: NewObject, attr: &str) -> ObjectResult {
-//     let this_unlocked = this.get().ro(gil);
-//     if let Ok(o) = this_unlocked.get_attr(attr) {
-//         return Ok(o);
-//     }
-//
-//     if let ObjectEnum::TypeShape { base_class: b, .. } = this_unlocked {
-//         let mut b_unlocked = b.get().ro(gil);
-//         loop {
-//             if let ObjectEnum::TypeShape { base_class: next_b, members: m, .. } = b_unlocked {
-//                 if let Some(o) = b_unlocked.shape.get_attr(attr) {
-//                     return Ok(o);
-//                 }
-//                 let next_b_unlocked = next_b.get().ro(gil);
-//                 if ptr::eq(b_unlocked, next_b_unlocked) {
-//                     break;
-//                 }
-//                 b_unlocked = next_b_unlocked;
-//             } else {
-//                 panic!("Type does not have TypeShape");
-//             }
-//         }
-//     }
-//     let type_ = &this_unlocked.type_;
-//     let type_unlocked = type_.get().ro(gil);
-//     loop {
-//         if let ObjectEnum::TypeShape { base_class: next_type, members: m, .. } = type_ {
-//
-//         } else {
-//             panic!("Type does not have TypeShape");
-//         }
-//     }
-//
-//     Err(Exception::attribute_error(attr))
-// }
 
 #[enum_dispatch]
-pub trait ObjectTrait: GcDrop + Scan + ToScan + Send + Sync {
-    fn get_attr(&self, name: &str) -> ObjectResult {
+pub trait ObjectTrait: GcDrop + Scan + ToScan + Send + Sync + 'static {
+    fn get_attr(_this: &Gc<GCell<Self>>, name: &str, _gil: &GCellOwner) -> ObjectResult {
         Err(Exception::attribute_error(name))
     }
 
-    fn set_attr(&mut self, name: &str, _value: Object) -> NullResult {
+    fn set_attr(
+        _this: &Gc<GCell<Self>>,
+        name: &str,
+        _value: Object,
+        _gil: &GCellOwner,
+    ) -> NullResult {
         Err(Exception::attribute_error(name))
     }
 
-    fn del_attr(&mut self, name: &str) -> NullResult {
+    fn del_attr(_this: &Gc<GCell<Self>>, name: &str, _gil: &GCellOwner) -> NullResult {
         Err(Exception::attribute_error(name))
     }
 
-    fn call_fn(
-        &self,
-    ) -> fn(&GCell<dyn ObjectTrait>, &mut MutexGuard<GCellOwner>, TupleObject) -> ObjectResult {
+    fn call_fn(&self) -> fn(ObjectRef, &mut MutexGuard<GCellOwner>, TupleObject) -> ObjectResult {
         |_, _, _| Err(Exception::type_error("Cannot call"))
     }
 
-    fn get_type(&self) -> Object;
-
-    fn as_tuple(&self) -> Option<&TupleObject> {
-        None
-    }
-    fn as_int(&self) -> Option<&IntObject> {
-        None
-    }
-    fn as_bool(&self) -> Option<&BoolObject> {
-        None
-    }
-    fn as_enum(self) -> ObjectEnum;
+    fn get_type(&self) -> ObjectRef<'_>;
 
     fn into_gc(self) -> Object
     where
         Self: Sized + 'static,
+        Object: From<Gc<GCell<Self>>>,
     {
-        Gc::new(GCell::new(self))
+        Gc::new(GCell::new(self)).into()
     }
 }
 
-pub(crate) trait GcGCellExt {
-    type InnerType: ObjectTrait + ?Sized;
-    type GetRef<'a>: Deref<Target = GCell<Self::InnerType>> + 'a;
-    fn get(&self) -> Self::GetRef<'_>;
+#[enum_dispatch]
+pub(crate) trait GcGCellExt
+where
+    for<'a> &'a Self: ObjectRefTrait,
+{
+    // type InnerType: ObjectTrait + ?Sized;
+    // type GetRef<'a>: Deref<Target = GCell<Self::InnerType>> + 'a;
+    // fn get(&self) -> Self::GetRef<'_>;
+    //
+    // type ReadRef<'a>: Deref<Target = Self::InnerType> + 'a;
+    // fn ro<'a>(&'a self, gil: &'a GCellOwner) -> Self::ReadRef<'a>;
+    //
+    // type WriteRef<'a>: DerefMut<Target = Self::InnerType> + 'a;
+    // fn rw<'a>(&'a self, gil: &'a mut GCellOwner) -> Self::WriteRef<'a>;
+    fn raw_id(&self) -> u64;
 
-    type ReadRef<'a>: Deref<Target = Self::InnerType> + 'a;
-    fn ro<'a>(&'a self, gil: &'a GCellOwner) -> Self::ReadRef<'a>;
+    fn get_attr(&self, gil: &GCellOwner, name: &str) -> ObjectResult;
 
-    type WriteRef<'a>: DerefMut<Target = Self::InnerType> + 'a;
-    fn rw<'a>(&'a self, gil: &'a mut GCellOwner) -> Self::WriteRef<'a>;
+    //noinspection RsSelfConvention
+    fn set_attr(&self, gil: &mut GCellOwner, name: &str, value: Object) -> NullResult;
+
+    fn del_attr(&self, gil: &mut GCellOwner, name: &str) -> NullResult;
+
+    fn call_fn(
+        &self,
+        gil: &GCellOwner,
+    ) -> fn(ObjectRef, &mut MutexGuard<GCellOwner>, TupleObject) -> ObjectResult;
+
+    fn call(&self, gil: &mut MutexGuard<GCellOwner>, args: TupleObject) -> ObjectResult;
+
+    fn get_type(&self, gil: &GCellOwner) -> Object;
+}
+
+impl<T> GcGCellExt for Gc<GCell<T>>
+where
+    T: ObjectTrait + ?Sized,
+    for<'a> ObjectRef<'a>: From<&'a Self>,
+{
+    fn raw_id(&self) -> u64 {
+        let ptr = self.get().deref() as *const GCell<_>;
+        ptr.to_raw_parts().0 as u64
+    }
 
     fn get_attr(&self, gil: &GCellOwner, name: &str) -> ObjectResult {
-        self.ro(gil).get_attr(name)
+        T::get_attr(self, name, gil)
     }
 
     //noinspection RsSelfConvention
     fn set_attr(&self, gil: &mut GCellOwner, name: &str, value: Object) -> NullResult {
-        self.rw(gil).set_attr(name, value)
+        T::set_attr(self, name, value, gil)
     }
 
     fn del_attr(&self, gil: &mut GCellOwner, name: &str) -> NullResult {
-        self.rw(gil).del_attr(name)
+        T::del_attr(self, name, gil)
     }
 
     fn call_fn(
         &self,
         gil: &GCellOwner,
-    ) -> fn(&GCell<dyn ObjectTrait>, &mut MutexGuard<GCellOwner>, TupleObject) -> ObjectResult {
-        self.ro(gil).call_fn()
+    ) -> fn(ObjectRef, &mut MutexGuard<GCellOwner>, TupleObject) -> ObjectResult {
+        self.get().ro(gil).call_fn()
     }
 
-    fn call(&self, gil: &mut MutexGuard<GCellOwner>, args: TupleObject) -> ObjectResult
-    where
-        Self::InnerType: Unsize<dyn ObjectTrait>,
-    {
-        let self_ = self.get();
-        let f = self_.ro(gil).call_fn();
-        f(self_.deref(), gil, args)
+    fn call(&self, gil: &mut MutexGuard<GCellOwner>, args: TupleObject) -> ObjectResult {
+        let f = self.get().ro(gil).call_fn();
+        f(self.into(), gil, args)
     }
 
     fn get_type(&self, gil: &GCellOwner) -> Object {
-        self.ro(gil).get_type()
-    }
-}
-
-impl<T> GcGCellExt for Gc<GCell<T>>
-where
-    T: ObjectTrait + ?Sized + 'static,
-{
-    type InnerType = T;
-    type GetRef<'a> = GcGuard<'a, GCell<T>>;
-    fn get(&self) -> Self::GetRef<'_> {
-        // Calls inherent method on `Gc`, not the method we're currently in
-        self.get()
-    }
-
-    type ReadRef<'a> = gcell::Ref<'a, Self::GetRef<'a>, T>;
-    fn ro<'a>(&'a self, gil: &'a GCellOwner) -> Self::ReadRef<'a> {
-        gcell::Ref(self.get(), gil)
-    }
-
-    type WriteRef<'a> = gcell::RefMut<'a, Self::GetRef<'a>, T>;
-    fn rw<'a>(&'a self, gil: &'a mut GCellOwner) -> Self::WriteRef<'a> {
-        gcell::RefMut(self.get(), gil)
-    }
-}
-
-impl<T> GcGCellExt for GCell<T>
-where
-    T: ObjectTrait + ?Sized + 'static,
-{
-    type InnerType = T;
-    type GetRef<'a> = &'a Self;
-    fn get(&self) -> Self::GetRef<'_> {
-        self
-    }
-
-    type ReadRef<'a> = gcell::Ref<'a, Self::GetRef<'a>, T>;
-    fn ro<'a>(&'a self, gil: &'a GCellOwner) -> Self::ReadRef<'a> {
-        gcell::Ref(self.get(), gil)
-    }
-
-    type WriteRef<'a> = gcell::RefMut<'a, Self::GetRef<'a>, T>;
-    fn rw<'a>(&'a self, gil: &'a mut GCellOwner) -> Self::WriteRef<'a> {
-        gcell::RefMut(self.get(), gil)
+        self.get().ro(gil).get_type().to_owned()
     }
 }
 
 #[derive(Scan)]
 pub struct TypeObject {
     pub name: String,
-    pub base_class: Object,
-    pub members: HashMap<String, Object>,
+    pub base_class: Option<Object>,
+    // pub members: HashMap<String, Object>,
     pub constructor: &'static ObjectSelfFunction,
 }
 impl ObjectTrait for TypeObject {
-    fn get_type(&self) -> Object {
-        G_TYPE.clone()
-    }
-
-    fn as_enum(self) -> ObjectEnum {
-        ObjectEnum::Type(self)
+    //noinspection RsTypeCheck
+    fn get_type(&self) -> ObjectRef<'_> {
+        self.base_class
+            .as_ref()
+            .unwrap_or(OBJECT_TYPE.borrow())
+            .into()
     }
 }
 
@@ -284,9 +289,9 @@ pub struct TupleObject {
 }
 
 impl ObjectTrait for TupleObject {
-    fn get_attr(&self, name: &str) -> ObjectResult {
+    fn get_attr(this: &Gc<GCell<Self>>, name: &str, gil: &GCellOwner) -> ObjectResult {
         if name == "len" {
-            match self.data.len().try_into() {
+            match this.get().ro(gil).data.len().try_into() {
                 Ok(v) => {
                     let int = IntObject::new(v);
                     Ok(int.into_gc())
@@ -300,16 +305,8 @@ impl ObjectTrait for TupleObject {
         }
     }
 
-    fn get_type(&self) -> Object {
-        G_TUPLE.clone()
-    }
-
-    fn as_tuple(&self) -> Option<&TupleObject> {
-        Some(self)
-    }
-
-    fn as_enum(self) -> ObjectEnum {
-        ObjectEnum::Tuple(self)
+    fn get_type(&self) -> ObjectRef {
+        G_TUPLE.deref().into()
     }
 }
 impl TupleObject {
@@ -337,16 +334,17 @@ pub struct IntObject {
     pub data: i64,
 }
 impl ObjectTrait for IntObject {
-    fn get_type(&self) -> Object {
-        G_INT.clone()
+    fn get_attr(this: &Gc<GCell<Self>>, name: &str, gil: &GCellOwner) -> ObjectResult {
+        if name == "__int__" {
+            Ok(this.clone().into())
+        } else {
+            // unsupported
+            todo!()
+        }
     }
 
-    fn as_int(&self) -> Option<&IntObject> {
-        Some(self)
-    }
-
-    fn as_enum(self) -> ObjectEnum {
-        ObjectEnum::Int(self)
+    fn get_type(&self) -> ObjectRef {
+        G_INT.deref().into()
     }
 }
 impl IntObject {
@@ -355,21 +353,16 @@ impl IntObject {
     }
 }
 
-pub struct BasicObject {
-    pub members: HashMap<String, Object>,
-    pub type_: Object,
-}
-
 #[derive(Scan)]
 pub struct NoneObject {}
 impl ObjectTrait for NoneObject {
-    fn get_type(&self) -> Object {
-        G_NONETYPE.clone()
+    fn get_type(&self) -> ObjectRef {
+        G_NONETYPE.deref().into()
     }
 
-    fn as_enum(self) -> ObjectEnum {
-        ObjectEnum::None(self)
-    }
+    // fn into_enum(self) -> ObjectEnum {
+    //     ObjectEnum::None(self)
+    // }
 }
 
 #[derive(Scan)]
@@ -377,16 +370,8 @@ pub struct BoolObject {
     pub data: bool,
 }
 impl ObjectTrait for BoolObject {
-    fn get_type(&self) -> Object {
-        G_BOOL.clone()
-    }
-
-    fn as_bool(&self) -> Option<&BoolObject> {
-        Some(self)
-    }
-
-    fn as_enum(self) -> ObjectEnum {
-        ObjectEnum::Bool(self)
+    fn get_type(&self) -> ObjectRef {
+        G_BOOL.deref().into()
     }
 }
 impl BoolObject {
@@ -413,58 +398,50 @@ where
 
 lazy_static! {
     pub static ref GIL: Mutex<GCellOwner> = Mutex::new(GCellOwner::make());
-    pub static ref OBJECT_TYPE: Object = {
-        #[derive(Scan)]
-        struct Dummy;
-        impl ObjectTrait for Dummy {
-            fn get_type(&self) -> Object {
-                unimplemented!("If this is ever called something has gone horribly wrong")
-            }
-            fn as_enum(self) -> ObjectEnum {
-                unimplemented!("If this is ever called something has gone horribly wrong")
-            }
-        }
-
-        let ty = Gc::new(GCell::new(TypeObject {
-            name: "Object".to_string(),
-            base_class: Gc::new(GCell::new(Dummy)),
-            members: HashMap::new(),
-            constructor: &(builtins::object_constructor as ObjectSelfFunction),
-        }));
-        ty.rw(&mut GIL.lock()).base_class = ty.clone();
-        ty
-    };
-    pub static ref G_TYPE: Object = Gc::new(GCell::new(TypeObject {
+    pub static ref OBJECT_TYPE: Object = TypeObject {
+        name: "Object".to_string(),
+        base_class: None,
+        // members: HashMap::new(),
+        constructor: &{builtins::object_constructor},
+    }.into_gc();
+    pub static ref G_TYPE: Object = TypeObject {
         name: "type".to_string(),
-        base_class: OBJECT_TYPE.clone(),
-        members: HashMap::new(),
-        constructor: &(builtins::type_constructor as ObjectSelfFunction),
-    }));
-    pub static ref G_TUPLE: Object = Gc::new(GCell::new(TypeObject {
+        base_class: None,
+        // members: HashMap::new(),
+        constructor: &{builtins::type_constructor},
+    }.into_gc();
+    pub static ref G_TUPLE: Object = TypeObject {
         name: "tuple".to_string(),
-        base_class: OBJECT_TYPE.clone(),
-        members: HashMap::new(),
-        constructor: &(builtins::tuple_constructor as ObjectSelfFunction),
-    }));
-    pub static ref G_INT: Object = Gc::new(GCell::new(TypeObject {
+        base_class: None,
+        // members: HashMap::new(),
+        constructor: &{builtins::tuple_constructor},
+    }.into_gc();
+    pub static ref G_INT: Object = TypeObject {
         name: "int".to_string(),
-        base_class: OBJECT_TYPE.clone(),
-        members: HashMap::new(),
-        constructor: &(builtins::int_constructor as ObjectSelfFunction),
-    }));
-    pub static ref G_NONETYPE: Object = Gc::new(GCell::new(TypeObject {
+        base_class: None,
+        // members: HashMap::new(),
+        constructor: &{builtins::int_constructor},
+    }.into_gc();
+    pub static ref G_FLOAT: Object = TypeObject {
+        name: "float".to_string(),
+        base_class: None,
+        // members: HashMap::new(),
+        constructor: &{builtins::float_constructor},
+    }.into_gc();
+    pub static ref G_NONETYPE: Object = TypeObject {
         name: "nonetype".to_string(),
-        base_class: OBJECT_TYPE.clone(),
-        members: HashMap::new(),
-        constructor: &(builtins::nonetype_constructor as ObjectSelfFunction),
-    }));
-    pub static ref G_BOOL: Object = Gc::new(GCell::new(TypeObject {
+        base_class: None,
+        // members: HashMap::new(),
+        constructor: &{builtins::nonetype_constructor},
+    }
+    .into_gc();
+    pub static ref G_BOOL: Object = TypeObject {
         name: "bool".to_string(),
-        base_class: OBJECT_TYPE.clone(),
-        members: HashMap::new(),
-        constructor: &(builtins::bool_constructor as ObjectSelfFunction),
-    }));
-    pub static ref G_NONE: Object = Gc::new(GCell::new(NoneObject {}));
-    pub static ref G_TRUE: Object = Gc::new(GCell::new(BoolObject { data: true }));
-    pub static ref G_FALSE: Object = Gc::new(GCell::new(BoolObject { data: false }));
+        base_class: None,
+        // members: HashMap::new(),
+        constructor: &{builtins::bool_constructor},
+    }.into_gc();
+    pub static ref G_NONE: Object = NoneObject {}.into_gc();
+    pub static ref G_TRUE: Object = BoolObject { data: true }.into_gc();
+    pub static ref G_FALSE: Object = BoolObject { data: false }.into_gc();
 }
