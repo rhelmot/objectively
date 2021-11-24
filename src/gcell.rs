@@ -1,6 +1,6 @@
 use std::{
     cell::UnsafeCell,
-    ops::{CoerceUnsized, Deref, DerefMut},
+    ops::{Deref, DerefMut},
     sync::atomic::{AtomicBool, Ordering},
 };
 
@@ -88,5 +88,3 @@ where
 }
 
 unsafe impl<T: ?Sized + Send + Sync> Sync for GCell<T> {}
-
-impl<T, U> CoerceUnsized<GCell<U>> for GCell<T> where T: CoerceUnsized<U> {}

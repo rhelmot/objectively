@@ -16,11 +16,9 @@ fn raw_is(obj1: &Object, obj2: &Object) -> bool {
 
 pub fn obj_iter_collect(gil: &mut MutexGuard<GCellOwner>, iterable: &Object) -> VecResult {
     let mut items = vec![];
-    let iter_method = iterable.get_attr(gil, "__iter__")?;
-    let iter = iter_method.call(gil, TupleObject::new0())?;
+    let iter = iterable.call_method("__iter__", gil, TupleObject::new0())?;
     loop {
-        let next_method = iter.get_attr(gil, "__next__")?;
-        let next = next_method.call(gil, TupleObject::new0());
+        let next = iter.call_method("__next__", gil, TupleObject::new0());
         match next {
             Ok(obj) => {
                 items.push(obj);
@@ -74,16 +72,16 @@ pub fn int_constructor(
 ) -> ObjectResult {
     let result = match args.data.as_slice() {
         [] => IntObject::new(0).into_gc(),
-        [arg] => arg
-            .get_attr(gil, "__int__")?
-            .call(gil, TupleObject::new1(IntObject::new(0).into_gc()))?,
+        [arg] => arg.call_method(
+            "__int__", gil,
+            TupleObject::new1(IntObject::new(0).into_gc()),
+        )?,
         [arg, base] => {
             if let Object::Int(_) = base {
             } else {
                 return Err(Exception::type_error("base parameter must be int"));
             }
-            let int_method = arg.get_attr(gil, "__int__")?;
-            int_method.call(gil, TupleObject::new1(base.clone()))?
+            arg.call_method("__int__", gil, TupleObject::new1(base.clone()))?
         }
         _ => return Err(Exception::type_error("expected 0-2 arguments")),
     };
@@ -102,16 +100,17 @@ pub fn float_constructor(
 ) -> ObjectResult {
     let result = match args.data.as_slice() {
         [] => FloatObject::new(0.0).into_gc(),
-        [arg] => arg
-            .get_attr(gil, "__float__")?
-            .call(gil, TupleObject::new1(FloatObject::new(0.0).into_gc()))?,
+        [arg] => arg.call_method(
+            "__float__",
+            gil,
+            TupleObject::new1(FloatObject::new(0.0).into_gc()),
+        )?,
         [arg, base] => {
             if let Object::Float(_) = base {
             } else {
                 return Err(Exception::type_error("base parameter must be float"));
             }
-            let float_method = arg.get_attr(gil, "__float__")?;
-            float_method.call(gil, TupleObject::new1(base.clone()))?
+            arg.call_method("__float__", gil, TupleObject::new1(base.clone()))?
         }
         _ => return Err(Exception::type_error("expected 0-2 arguments")),
     };
@@ -139,9 +138,8 @@ pub fn bool_constructor(
     match args.data.as_slice() {
         [] => Ok(G_FALSE.clone()),
         [arg] => {
-            let result = arg
-                .get_attr(gil, "__bool__")?
-                .call(gil, TupleObject::new0());
+            let result =
+                arg.call_method("__bool__", gil, TupleObject::new0());
             match result {
                 Ok(Object::Bool(bool)) => Ok(Object::Bool(bool)),
                 Ok(_) => Err(Exception::type_error("__bool__ did not return a bool")),
