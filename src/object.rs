@@ -62,6 +62,7 @@ impl Exception {
 #[derive(Clone, Debug, Scan)]
 pub enum Object {
     Bool(Gc<GCell<BoolObject>>),
+    Dict(Gc<GCell<DictObject>>),
     Float(Gc<GCell<FloatObject>>),
     Function(Gc<GCell<FunctionObject>>),
     Int(Gc<GCell<IntObject>>),
@@ -75,6 +76,7 @@ pub enum Object {
 #[derive(Debug)]
 pub enum ObjectRef<'a> {
     Bool(&'a Gc<GCell<BoolObject>>),
+    Dict(&'a Gc<GCell<DictObject>>),
     Float(&'a Gc<GCell<FloatObject>>),
     Function(&'a Gc<GCell<FunctionObject>>),
     Int(&'a Gc<GCell<IntObject>>),
@@ -88,6 +90,7 @@ impl ObjectRef<'_> {
     fn to_owned(self) -> Object {
         match self {
             ObjectRef::Bool(value) => value.clone().into(),
+            ObjectRef::Dict(value) => value.clone().into(),
             ObjectRef::Float(value) => value.clone().into(),
             ObjectRef::Function(value) => value.clone().into(),
             ObjectRef::Int(value) => value.clone().into(),
@@ -100,9 +103,21 @@ impl ObjectRef<'_> {
 }
 
 #[derive(Scan)]
+pub struct DictObject {
+    dict: HashMap<i64, Object>,
+}
+
+impl ObjectTrait for DictObject {
+    fn get_type(&self) -> ObjectRef<'_> {
+        todo!()
+    }
+}
+
+#[derive(Scan)]
 pub struct FunctionObject {
     data: Object,
-    func: &'static fn(ObjectRef, ObjectRef, &mut MutexGuard<GCellOwner>, TupleObject) -> ObjectResult,
+    func:
+        &'static fn(ObjectRef, ObjectRef, &mut MutexGuard<GCellOwner>, TupleObject) -> ObjectResult,
 }
 
 impl ObjectTrait for FunctionObject {
@@ -139,6 +154,7 @@ impl<'a> From<&'a Object> for ObjectRef<'a> {
     fn from(object: &'a Object) -> Self {
         match object {
             &Object::Bool(ref value) => value.into(),
+            &Object::Dict(ref value) => value.into(),
             &Object::Float(ref value) => value.into(),
             &Object::Function(ref value) => value.into(),
             &Object::Int(ref value) => value.into(),
@@ -318,7 +334,12 @@ where
         T::call(self, this_param, gil, args)
     }
 
-    fn call_method(&self, name: &str, gil: &mut MutexGuard<GCellOwner>, args: TupleObject) -> ObjectResult {
+    fn call_method(
+        &self,
+        name: &str,
+        gil: &mut MutexGuard<GCellOwner>,
+        args: TupleObject,
+    ) -> ObjectResult {
         T::call_method(self, name, gil, args)
     }
 
@@ -399,10 +420,13 @@ impl ObjectTrait for IntObject {
         if name == "__int__" {
             Ok(FunctionObject {
                 data: this.clone().into(),
-                func: &{|int: ObjectRef, _: ObjectRef, _: &mut MutexGuard<GCellOwner>, _| {
-                    Ok(int.to_owned())
-                }},
-            }.into_gc())
+                func: &{
+                    |int: ObjectRef, _: ObjectRef, _: &mut MutexGuard<GCellOwner>, _| {
+                        Ok(int.to_owned())
+                    }
+                },
+            }
+            .into_gc())
         } else {
             // unsupported
             todo!()

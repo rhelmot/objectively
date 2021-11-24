@@ -73,7 +73,8 @@ pub fn int_constructor(
     let result = match args.data.as_slice() {
         [] => IntObject::new(0).into_gc(),
         [arg] => arg.call_method(
-            "__int__", gil,
+            "__int__",
+            gil,
             TupleObject::new1(IntObject::new(0).into_gc()),
         )?,
         [arg, base] => {
@@ -138,8 +139,7 @@ pub fn bool_constructor(
     match args.data.as_slice() {
         [] => Ok(G_FALSE.clone()),
         [arg] => {
-            let result =
-                arg.call_method("__bool__", gil, TupleObject::new0());
+            let result = arg.call_method("__bool__", gil, TupleObject::new0());
             match result {
                 Ok(Object::Bool(bool)) => Ok(Object::Bool(bool)),
                 Ok(_) => Err(Exception::type_error("__bool__ did not return a bool")),
