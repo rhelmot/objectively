@@ -1,12 +1,12 @@
-use std::{convert::TryInto, thread, time};
+use std::{convert::TryInto, ops::Deref, thread, time};
 
 use parking_lot::MutexGuard;
 
 use crate::{
     gcell::GCellOwner,
     object::{
-        yield_gil, Exception, ExceptionKind, FloatObject, GcGCellExt, IntObject, Object,
-        ObjectResult, ObjectTrait, TupleObject, VecResult, G_FALSE, G_NONE,
+        yield_gil, ExceptionObject, FloatObject, GcGCellExt, IntObject, Object, ObjectResult,
+        ObjectTrait, TupleObject, TypeObject, VecResult, G_FALSE, G_NONE, G_STOPITERATION,
     },
 };
 
@@ -16,15 +16,15 @@ fn raw_is(obj1: &Object, obj2: &Object) -> bool {
 
 pub fn obj_iter_collect(gil: &mut MutexGuard<GCellOwner>, iterable: &Object) -> VecResult {
     let mut items = vec![];
-    let iter = iterable.call_method("__iter__", gil, TupleObject::new0())?;
+    let iter: Object = iterable.call_method("__iter__", gil, TupleObject::new0()?)?;
     loop {
-        let next = iter.call_method("__next__", gil, TupleObject::new0());
+        let next = iter.call_method("__next__", gil, TupleObject::new0()?);
         match next {
             Ok(obj) => {
                 items.push(obj);
             }
             Err(e) => {
-                return if e.kind == ExceptionKind::StopIteration {
+                return if e.get_type(gil).is(G_STOPITERATION.deref()) {
                     Ok(items)
                 } else {
                     Err(e)
@@ -35,6 +35,42 @@ pub fn obj_iter_collect(gil: &mut MutexGuard<GCellOwner>, iterable: &Object) -> 
 }
 
 pub fn type_constructor(
+    gil: &mut MutexGuard<GCellOwner>,
+    _this: Object,
+    args: TupleObject,
+) -> ObjectResult {
+    match args.data.as_slice() {
+        [] => todo!(),
+        [obj] => Ok(obj.get_type(gil).into()),
+        [subty_, members_] => {
+            if let (Object::Type(subty), Object::Dict(members)) = (subty_, members_) {
+                Ok(TypeObject {
+                    ty: todo!(),
+                    base_class: Some(subty.clone()),
+                    constructor: subty.get().ro(gil).constructor,
+                }
+                .into_object())
+            } else {
+                Err(todo!())
+            }
+        }
+        [_, _, _, ..] => todo!(),
+    }
+}
+
+pub fn exc_constructor(
+    _gil: &mut MutexGuard<GCellOwner>,
+    this: Object,
+    args: TupleObject,
+) -> ObjectResult {
+    Ok(ExceptionObject {
+        ty: this.try_into().unwrap(),
+        args: args.into_gc(),
+    }
+    .into_object())
+}
+
+pub fn object_constructor(
     _gil: &mut MutexGuard<GCellOwner>,
     _this: Object,
     _args: TupleObject,
@@ -42,12 +78,12 @@ pub fn type_constructor(
     todo!()
 }
 
-pub fn object_constructor(
+pub fn null_constructor(
     _gil: &mut MutexGuard<GCellOwner>,
-    _thi: Object,
+    _this: Object,
     _args: TupleObject,
 ) -> ObjectResult {
-    todo!()
+    Err(ExceptionObject::type_error("Cannot construct this object")?)
 }
 
 pub fn tuple_constructor(
@@ -56,12 +92,12 @@ pub fn tuple_constructor(
     args: TupleObject,
 ) -> ObjectResult {
     match args.data.as_slice() {
-        [] => Ok(TupleObject::new0().into_gc()),
+        [] => Ok(TupleObject::new0()?.into()),
         [arg] => {
             let res = obj_iter_collect(gil, arg)?;
-            Ok(TupleObject::new(res).into_gc())
+            Ok(TupleObject::new(res)?.into())
         }
-        _ => Err(Exception::type_error("expected 0 or 1 arguments")),
+        _ => Err(ExceptionObject::type_error("expected 0 or 1 arguments")?),
     }
 }
 
@@ -71,26 +107,28 @@ pub fn int_constructor(
     args: TupleObject,
 ) -> ObjectResult {
     let result = match args.data.as_slice() {
-        [] => IntObject::new(0).into_gc(),
+        [] => IntObject::new(0)?.into(),
         [arg] => arg.call_method(
             "__int__",
             gil,
-            TupleObject::new1(IntObject::new(0).into_gc()),
+            TupleObject::new1(IntObject::new(0)?.into())?,
         )?,
         [arg, base] => {
             if let Object::Int(_) = base {
             } else {
-                return Err(Exception::type_error("base parameter must be int"));
+                return Err(ExceptionObject::type_error("base parameter must be int")?);
             }
-            arg.call_method("__int__", gil, TupleObject::new1(base.clone()))?
+            arg.call_method("__int__", gil, TupleObject::new1(base.clone())?)?
         }
-        _ => return Err(Exception::type_error("expected 0-2 arguments")),
+        _ => return Err(ExceptionObject::type_error("expected 0-2 arguments")?),
     };
 
     if let Object::Int(_) = result {
         Ok(result)
     } else {
-        Err(Exception::type_error("__int__ did not return an int"))
+        Err(ExceptionObject::type_error(
+            "__int__ did not return an int",
+        )?)
     }
 }
 
@@ -100,26 +138,28 @@ pub fn float_constructor(
     args: TupleObject,
 ) -> ObjectResult {
     let result = match args.data.as_slice() {
-        [] => FloatObject::new(0.0).into_gc(),
+        [] => FloatObject::new(0.0)?.into(),
         [arg] => arg.call_method(
             "__float__",
             gil,
-            TupleObject::new1(FloatObject::new(0.0).into_gc()),
+            TupleObject::new1(FloatObject::new(0.0)?.into())?,
         )?,
         [arg, base] => {
             if let Object::Float(_) = base {
             } else {
-                return Err(Exception::type_error("base parameter must be float"));
+                return Err(ExceptionObject::type_error("base parameter must be float")?);
             }
-            arg.call_method("__float__", gil, TupleObject::new1(base.clone()))?
+            arg.call_method("__float__", gil, TupleObject::new1(base.clone())?)?
         }
-        _ => return Err(Exception::type_error("expected 0-2 arguments")),
+        _ => return Err(ExceptionObject::type_error("expected 0-2 arguments")?),
     };
 
     if let Object::Float(_) = result {
         Ok(result)
     } else {
-        Err(Exception::type_error("__float__ did not return an float"))
+        Err(ExceptionObject::type_error(
+            "__float__ did not return an float",
+        )?)
     }
 }
 
@@ -128,7 +168,15 @@ pub fn nonetype_constructor(
     _this: Object,
     _args: TupleObject,
 ) -> ObjectResult {
-    Ok(G_NONE.clone())
+    Ok(G_NONE.clone().into())
+}
+
+pub fn bytes_constructor(
+    _gil: &mut MutexGuard<GCellOwner>,
+    _this: Object,
+    _args: TupleObject,
+) -> ObjectResult {
+    todo!()
 }
 
 pub fn bool_constructor(
@@ -137,23 +185,25 @@ pub fn bool_constructor(
     args: TupleObject,
 ) -> ObjectResult {
     match args.data.as_slice() {
-        [] => Ok(G_FALSE.clone()),
+        [] => Ok(G_FALSE.clone().into()),
         [arg] => {
-            let result = arg.call_method("__bool__", gil, TupleObject::new0());
+            let result = arg.call_method("__bool__", gil, TupleObject::new0()?);
             match result {
                 Ok(Object::Bool(bool)) => Ok(Object::Bool(bool)),
-                Ok(_) => Err(Exception::type_error("__bool__ did not return a bool")),
+                Ok(_) => Err(ExceptionObject::type_error(
+                    "__bool__ did not return a bool",
+                )?),
                 Err(err) => Err(err),
             }
         }
-        _ => Err(Exception::type_error("expected 0 or 1 args")),
+        _ => Err(ExceptionObject::type_error("expected 0 or 1 args")?),
     }
 }
 
 pub fn id(_this: &Object, args: &TupleObject) -> ObjectResult {
     match args.data.as_slice() {
-        [arg] => Ok(IntObject::new(arg.raw_id() as i64).into_gc()),
-        _ => Err(Exception::type_error("expected one argument")),
+        [arg] => Ok(IntObject::new(arg.raw_id() as i64)?.into()),
+        _ => Err(ExceptionObject::type_error("expected one argument")?),
     }
 }
 
@@ -166,7 +216,9 @@ pub fn sleep(gil: &mut MutexGuard<GCellOwner>, _this: &Object, args: &TupleObjec
                     match seconds.try_into() {
                         Ok(seconds) => time::Duration::from_secs(seconds),
                         Err(_ /*std::num::TryFromIntError*/) => {
-                            return Err(Exception::overflow_error("duration must be positive"))
+                            return Err(ExceptionObject::overflow_error(
+                                "duration must be positive",
+                            )?)
                         }
                     }
                 }
@@ -174,25 +226,27 @@ pub fn sleep(gil: &mut MutexGuard<GCellOwner>, _this: &Object, args: &TupleObjec
                     let float = f.get().ro(gil).value;
                     match float {
                         _ if float.is_infinite() => {
-                            return Err(Exception::overflow_error("duration must be finite"))
+                            return Err(ExceptionObject::overflow_error("duration must be finite")?)
                         }
                         _ if float.is_nan() => {
-                            return Err(Exception::overflow_error("duration cannot be NaN"))
+                            return Err(ExceptionObject::overflow_error("duration cannot be NaN")?)
                         }
                         _ if float.is_sign_negative() => {
-                            return Err(Exception::overflow_error("duration must be non-negative"))
+                            return Err(ExceptionObject::overflow_error(
+                                "duration must be non-negative",
+                            )?)
                         }
                         _ => time::Duration::from_secs_f64(float),
                     }
                 }
 
-                _ => return Err(Exception::type_error("expected a number")),
+                _ => return Err(ExceptionObject::type_error("expected a number")?),
             }
         }
-        _ => return Err(Exception::type_error("expected one argument")),
+        _ => return Err(ExceptionObject::type_error("expected one argument")?),
     };
     yield_gil(gil, || {
         thread::sleep(duration);
     });
-    Ok(G_NONE.clone())
+    Ok(G_NONE.clone().into())
 }

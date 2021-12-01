@@ -55,6 +55,23 @@ where
     }
 }
 
+impl<T> GCell<T> where T: Immutable {
+    pub fn uncell(self) -> T {
+        self.0.into_inner()
+    }
+    pub fn unwrap_ref(&self) -> &T {
+        unsafe { &*self.0.get() }
+    }
+}
+
+impl<T> Deref for GCell<T> where T: Immutable {
+    type Target = T;
+
+    fn deref(&self) -> &Self::Target {
+        unsafe { &*self.0.get() }
+    }
+}
+
 impl<'a, R, T: ?Sized> Deref for RefMut<'_, R, T>
 where
     R: Deref<Target = GCell<T>>,
@@ -88,3 +105,5 @@ where
 }
 
 unsafe impl<T: ?Sized + Send + Sync> Sync for GCell<T> {}
+
+pub unsafe trait Immutable {}

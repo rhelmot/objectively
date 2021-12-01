@@ -1,7 +1,11 @@
 #![feature(ptr_metadata)]
+#![feature(cursor_remaining)]
+#![feature(try_reserve)]
+#![feature(result_into_ok_or_err)]
 
 mod builtins;
 mod gcell;
+mod interpreter;
 mod object;
 
 fn main() {
