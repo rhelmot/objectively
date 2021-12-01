@@ -209,7 +209,7 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 		switch (opcode) {
 
 #define CHECK(_val) ({ __typeof__(_val) _evaluated = (_val); if (!_evaluated) { break; } RESYNC_GROUP(); _evaluated; })
-#define POP() ({ Object *_popped = list_pop_back_inner(stack); if (_popped == NULL) { puts("Fatal error: stack underflow"); exit(1); } _popped; })
+#define POP() ({ Object *_popped = list_pop_back_inner(stack); if (_popped == NULL) { error = exc_msg(&g_RuntimeError, "stack underflow"); goto ERROR; } _popped; })
 #define PUSH(_pushed) ({ if (!list_push_back_inner(stack, (Object*)_pushed)) { break; } })
 #define TEMPROOT(_rooted) ({ if (!list_push_back_inner(temproot, (Object*)_rooted)) { break ; } })
 #define NEXT_NUM_UNSIGNED() ({ uint64_t _lit; if (!next_num_unsigned(closure->bytecode, &pointer, &_lit)) { error = exc_msg(&g_RuntimeError, "out of bounds"); break; } _lit; })
@@ -588,7 +588,7 @@ ERROR:
 		pointer = &bytes_data(closure->bytecode)[catch_target];
 
 		while (stack->len) {
-			POP(); // ok to use this outside the switch
+			POP(); // this cannot trigger the error condition
 		}
 		if (!list_push_back_inner(stack, error)) {
 			error = (Object*)&MemoryError_inst;
