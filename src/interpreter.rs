@@ -15,6 +15,7 @@ use crate::{
         MEMORYERROR_INST, IntObject, FloatObject, G_NONE, G_TRUE, G_FALSE,
     },
 };
+use crate::object::ObjectTrait;
 
 enum StepResult {
     Normal,
@@ -154,7 +155,7 @@ fn interpreter_inner(
         }
         Opcode::LIT_BYTES => {
             let val = next_bytes(code)?;
-            fallible_push(stack, val.into())?;
+            fallible_push(stack, val.into_object())?;
             Ok(StepResult::Normal)
         }
         Opcode::LIT_INT => {

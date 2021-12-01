@@ -320,16 +320,6 @@ pub trait ObjectTrait: GcDrop + Scan + ToScan + Send + Sync + 'static {
     }
 }
 
-impl<T> From<T> for Object
-where
-    T: ObjectTrait,
-    Object: From<G<T>>,
-{
-    fn from(this: T) -> Self {
-        this.into_object()
-    }
-}
-
 #[enum_dispatch]
 pub(crate) trait GcGCellExt
 where
