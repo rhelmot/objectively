@@ -71,7 +71,7 @@ bool gil_probe() {
 		sleep_inner(0.0000001);
 	}
 
-	if (oly_thread != NULL && CURRENT_INJECTED == NULL) {
+	if (oly_thread != NULL && CURRENT_INJECTED != NULL) {
 		error = (Object*)CURRENT_INJECTED;
 		oly_thread->injected = NULL;
 		return false;
