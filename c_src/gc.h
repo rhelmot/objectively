@@ -6,6 +6,7 @@
 
 __attribute__((constructor)) void gc_init();
 Object *gc_alloc(size_t size);
+Object *gc_alloc_ex(size_t size, ThreadGroupObject *group);
 void gc_collect();
 void gc_probe();
 bool gc_root(Object *obj);

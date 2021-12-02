@@ -457,7 +457,7 @@ Object *interpreter(ClosureObject *closure, TupleObject *args) {
 				}
 				TEMPROOT(args);
 				TEMPROOT(target);
-				PUSH(CHECK(thread_raw(target, (TupleObject*)args, &g_thread)));
+				PUSH(CHECK(thread_raw(target, (TupleObject*)args, &g_thread, CURRENT_GROUP)));
 				continue;
 			}
 			case RAISE: {

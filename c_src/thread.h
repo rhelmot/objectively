@@ -39,7 +39,7 @@ extern ThreadGroupObject root_threadgroup;
 bool thread_trace(Object *self, bool (*tracer)(Object *tracee));
 Object *thread_get_attr(Object *self, Object *name);
 Object* thread_constructor(Object *self, TupleObject *args);
-ThreadObject *thread_raw(Object *target, TupleObject *args, TypeObject *type);
+ThreadObject *thread_raw(Object *target, TupleObject *args, TypeObject *type, ThreadGroupObject *group);
 void threadgroup_finalize(Object *self);
 Object* threadgroup_constructor(Object *self, TupleObject *args);
 

@@ -95,14 +95,18 @@ void gc_init() {
 }
 
 Object *gc_alloc(size_t size) {
-	Object *result = current_thread_alloc(size);
+	return gc_alloc_ex(size, CURRENT_GROUP);
+}
+
+Object *gc_alloc_ex(size_t size, ThreadGroupObject *group) {
+	Object *result = quota_alloc(size, group);
 	if (!result) {
 		return NULL;
 	}
 	result->table = NULL;
-	result->group = CURRENT_GROUP;
+	result->group = group;
 	if (!gc_add(result)) {
-		current_thread_dealloc(result, size);
+		quota_dealloc(result, size, group);
 		return NULL;
 	}
 	return result;

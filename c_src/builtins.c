@@ -2061,6 +2061,24 @@ Object *threadgroup_uninject(TupleObject *args) {
 }
 BUILTIN_METHOD(uninject, threadgroup_uninject, threadgroup);
 
+Object *threadgroup_spawn_donated(TupleObject *args) {
+	if (args->len != 3) {
+		error = exc_msg(&g_TypeError, "Expected 3 arguments");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_threadgroup)) {
+		error = exc_msg(&g_TypeError, "Expected threadgroup");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[2], &g_tuple)) {
+		error = exc_msg(&g_TypeError, "Argument 3: expected tuple");
+		return NULL;
+	}
+
+	return (Object*)thread_raw(args->data[1], (TupleObject*)args->data[2], &g_thread, (ThreadGroupObject*)args->data[0]);
+}
+BUILTIN_METHOD(spawn_donated, threadgroup_spawn_donated, threadgroup);
+
 /////////////////////////////////////
 /// freestanding functions
 /////////////////////////////////////

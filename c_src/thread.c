@@ -99,8 +99,8 @@ void *thread_target(void *_thread) {
 	return NULL;
 }
 
-ThreadObject *thread_raw(Object *target, TupleObject *args, TypeObject *type) {
-	ThreadObject *thread = (ThreadObject*)gc_alloc(sizeof(ThreadObject));
+ThreadObject *thread_raw(Object *target, TupleObject *args, TypeObject *type, ThreadGroupObject *group) {
+	ThreadObject *thread = (ThreadObject*)gc_alloc_ex(sizeof(ThreadObject), group);
 	if (thread == NULL) {
 		return NULL;
 	}
@@ -178,7 +178,7 @@ Object* thread_constructor(Object *_self, TupleObject *args) {
 		return NULL;
 	}
 
-	return (Object*)thread_raw(args->data[0], (TupleObject*)args->data[1], self);
+	return (Object*)thread_raw(args->data[0], (TupleObject*)args->data[1], self, CURRENT_GROUP);
 }
 
 ThreadGroupObject *threadgroup_raw(uint64_t mem_limit, uint64_t time_slice, TypeObject *type) {
