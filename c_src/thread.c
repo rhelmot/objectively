@@ -128,15 +128,15 @@ bool thread_yield(Object *val) {
 		error = exc_msg(&g_RuntimeError, "Cannot yield from main thread");
 		return false;
 	}
+	oly_thread->status = YIELDED;
+	oly_thread->result = val;
+	while (oly_thread->status == YIELDED && oly_thread->injected == NULL) {
+		sleep_inner(0.0000001);
+	}
 	if (oly_thread->injected != NULL) {
 		error = (Object*)oly_thread->injected;
 		oly_thread->injected = NULL;
 		return false;
-	}
-	oly_thread->status = YIELDED;
-	oly_thread->result = val;
-	while (oly_thread->status == YIELDED) {
-		sleep_inner(0.0000001);
 	}
 	return true;
 }
