@@ -29,6 +29,7 @@ typedef struct ThreadGroupObject {
 	uint64_t mem_limit;
 	uint64_t mem_used;
 	uint64_t yield_interval; // could be a time interval in the future
+	ExceptionObject *injected;
 } ThreadGroupObject;
 
 extern TypeObject g_thread;
@@ -48,3 +49,4 @@ bool thread_yield(Object *val);
 
 extern __thread ThreadObject *oly_thread;
 #define CURRENT_GROUP (oly_thread->header.group)
+#define CURRENT_INJECTED (oly_thread->injected ? oly_thread->injected : CURRENT_GROUP->injected)

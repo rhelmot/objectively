@@ -2025,6 +2025,42 @@ bool donate_inner(ThreadGroupObject *new_group, Object *obj) {
 	return true;
 }
 
+Object *threadgroup_inject(TupleObject *args) {
+	if (args->len != 2) {
+		error = exc_msg(&g_TypeError, "Expected 2 arguments");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_threadgroup)) {
+		error = exc_msg(&g_TypeError, "Expected threadgroup");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[1], &g_exception)) {
+		error = exc_msg(&g_TypeError, "Expected exception");
+		return NULL;
+	}
+
+	ThreadGroupObject *self = (ThreadGroupObject*)args->data[0];
+	self->injected = (ExceptionObject*)args->data[1];
+	return (Object*)&g_none;
+}
+BUILTIN_METHOD(inject, threadgroup_inject, threadgroup);
+
+Object *threadgroup_uninject(TupleObject *args) {
+	if (args->len != 1) {
+		error = exc_msg(&g_TypeError, "Expected 1 argument");
+		return NULL;
+	}
+	if (!isinstance_inner(args->data[0], &g_threadgroup)) {
+		error = exc_msg(&g_TypeError, "Expected threadgroup");
+		return NULL;
+	}
+
+	ThreadGroupObject *self = (ThreadGroupObject*)args->data[0];
+	self->injected = NULL;
+	return (Object*)&g_none;
+}
+BUILTIN_METHOD(uninject, threadgroup_uninject, threadgroup);
+
 /////////////////////////////////////
 /// freestanding functions
 /////////////////////////////////////

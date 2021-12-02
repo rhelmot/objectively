@@ -71,8 +71,8 @@ bool gil_probe() {
 		sleep_inner(0.0000001);
 	}
 
-	if (oly_thread != NULL && oly_thread->injected != NULL) {
-		error = (Object*)oly_thread->injected;
+	if (oly_thread != NULL && CURRENT_INJECTED == NULL) {
+		error = (Object*)CURRENT_INJECTED;
 		oly_thread->injected = NULL;
 		return false;
 	}
@@ -130,11 +130,11 @@ bool thread_yield(Object *val) {
 	}
 	oly_thread->status = YIELDED;
 	oly_thread->result = val;
-	while (oly_thread->status == YIELDED && oly_thread->injected == NULL) {
+	while (oly_thread->status == YIELDED && CURRENT_INJECTED == NULL) {
 		sleep_inner(0.0000001);
 	}
-	if (oly_thread->injected != NULL) {
-		error = (Object*)oly_thread->injected;
+	if (CURRENT_INJECTED != NULL) {
+		error = (Object*)CURRENT_INJECTED;
 		oly_thread->injected = NULL;
 		return false;
 	}
