@@ -7,12 +7,13 @@ use shredder::{marker::GcDrop, Gc, Scan, ToScan};
 
 use crate::{builtins, gcell::{GCell, GCellOwner}};
 
+pub type Gil<'a> = MutexGuard<'a, GCellOwner>;
 pub type G<T> = Gc<GCell<T>>;
 pub type Result<T> = std::result::Result<T, G<ExceptionObject>>;
 pub type NullResult = Result<()>;
 pub type ObjectResult = Result<Object>;
 pub type VecResult = Result<Vec<Object>>;
-pub type ObjectSelfFunction = fn(&mut MutexGuard<GCellOwner>, Object, TupleObject) -> ObjectResult;
+pub type ObjectSelfFunction = fn(&mut Gil, Object, TupleObject) -> ObjectResult;
 
 #[enum_dispatch(GcGCellExt)]
 #[derive(Clone, Debug, Scan)]
@@ -559,7 +560,6 @@ impl IntObject {
 
 #[derive(Scan)]
 pub struct NoneObject {
-    x: i32,
 }
 
 impl ObjectTrait for NoneObject {
@@ -583,6 +583,9 @@ impl BoolObject {
             G_FALSE.clone()
         })
     }
+}
+pub fn bool_raw(b: G<BoolObject>) -> bool {
+    b.is(G_TRUE.deref())
 }
 
 // If `F` panics, the process will be aborted instead of unwinding
@@ -694,7 +697,7 @@ lazy_static! {
         ty: G_MEMORYERROR.clone(),
         args: TupleObject::new1(BytesObject::from_str("Out of memory").unwrap().into()).unwrap(),
     }.into_gc();
-    pub static ref G_NONE: G<NoneObject> = NoneObject {x: 1}.into_gc();
+    pub static ref G_NONE: G<NoneObject> = NoneObject {}.into_gc();
     pub static ref G_TRUE: G<BoolObject> = BoolObject {}.into_gc();
     pub static ref G_FALSE: G<BoolObject> = BoolObject {}.into_gc();
 }

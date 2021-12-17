@@ -7,6 +7,7 @@ mod builtins;
 mod gcell;
 mod interpreter;
 mod object;
+mod gdict;
 
 fn main() {
     println!("Hello, world!");

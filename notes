@@ -1,9 +1,0 @@
-Concept: a bytecode interpreter for an object oriented language that has the power to implement virtualization and thus an operating system.
-the challenge is at first to solve a simple reversing challenge in the VM, then to pwn a service giving you a foothold on a machine, then getting LPE on that machine by pwning its kernel, then using the ability to send crafted packets to pwn a router.
-
-I'm thinking the language is similar in concept to python - nonprimitive objects have a type (another object) and a value (a dict)
-the bytes object in the language has a subclass which is a closure - an executable code object which contans both bytecode and a dict for its environment
-
-one possible bug avenue is exception handling leaving stuff in an incomplete state. a sneaky avenue for accomplishing this would be since there is no type checking for number of arguments, an exception could be raised by accessing args[n]
-another bug avenue is the side channel of being able to tell how many objects were created in a given call by comparing the generated object identities before and after the call
-need to make sure not to leave the interpreter stack in an inconsistent state during exception handling

@@ -13,6 +13,7 @@ leb128 = "0.2.5"
 num_enum = "0.5.4"
 parking_lot = "0.11.2"
 shredder_derive = "0.2.0"
+hashbrown = { version = "0.11.2", features = ["raw"] }
 
 [dependencies.shredder]
 version = "0.2.0"

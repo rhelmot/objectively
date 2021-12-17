@@ -6,9 +6,11 @@ use crate::{
     gcell::GCellOwner,
     object::{
         yield_gil, ExceptionObject, FloatObject, GcGCellExt, IntObject, Object, ObjectResult,
-        ObjectTrait, TupleObject, TypeObject, VecResult, G_FALSE, G_NONE, G_STOPITERATION,
+        ObjectTrait, TupleObject, TypeObject, VecResult, G_FALSE, G_NONE, G_STOPITERATION, Gil,
+        Result
     },
 };
+use crate::object::bool_raw;
 
 fn raw_is(obj1: &Object, obj2: &Object) -> bool {
     obj1.raw_id() == obj2.raw_id()
@@ -249,4 +251,33 @@ pub fn sleep(gil: &mut MutexGuard<GCellOwner>, _this: &Object, args: &TupleObjec
         thread::sleep(duration);
     });
     Ok(G_NONE.clone().into())
+}
+pub fn hash_inner(gil: &mut Gil, key: Object) -> Result<u64>  {
+    let h: Object = key.call_method("__hash__", gil, TupleObject::new0()?)?;
+    if let Object::Int(i) = h {
+        Ok(i.get().ro(gil).data as u64)
+    } else {
+        Err(ExceptionObject::type_error("__hash__ must return int")?)
+    }
+}
+
+pub fn hash(
+    gil: &mut MutexGuard<GCellOwner>,
+    _this: Object,
+    args: TupleObject,
+) -> ObjectResult {
+    if let [arg] = args.data.as_slice() {
+        Ok(IntObject::new(hash_inner(gil, arg.clone())? as i64)?.into())
+    } else {
+        Err(ExceptionObject::type_error("Expected 1 argument")?)
+    }
+}
+
+pub fn eq_inner(gil: &mut Gil, one: Object, two: Object) -> Result<bool> {
+    let h: Object = one.call_method("__eq__", gil, TupleObject::new1(two)?)?;
+    if let Object::Bool(b) = h {
+        Ok(bool_raw(b))
+    } else {
+        Err(ExceptionObject::type_error("__eq__ must return bool")?)
+    }
 }
