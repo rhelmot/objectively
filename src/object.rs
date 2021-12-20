@@ -18,6 +18,7 @@ pub type ObjectSelfFunction = fn(&mut Gil, Object, TupleObject) -> ObjectResult;
 #[enum_dispatch(GcGCellExt)]
 #[derive(Clone, Debug, Scan)]
 pub enum Object {
+    Basic(G<BasicObject>),
     Bool(G<BoolObject>),
     Dict(G<DictObject>),
     Float(G<FloatObject>),
@@ -33,6 +34,7 @@ pub enum Object {
 #[enum_dispatch(ObjectRefTrait)]
 #[derive(Debug)]
 pub enum ObjectRef<'a> {
+    Basic(&'a G<BasicObject>),
     Bool(&'a G<BoolObject>),
     Dict(&'a G<DictObject>),
     Float(&'a G<FloatObject>),
@@ -48,6 +50,7 @@ pub enum ObjectRef<'a> {
 impl ObjectRef<'_> {
     fn to_owned(self) -> Object {
         match self {
+            ObjectRef::Basic(value) => value.clone().into(),
             ObjectRef::Bool(value) => value.clone().into(),
             ObjectRef::Dict(value) => value.clone().into(),
             ObjectRef::Float(value) => value.clone().into(),
@@ -77,6 +80,7 @@ impl<'a> From<&'a Object> for ObjectRef<'a> {
     fn from(object: &'a Object) -> Self {
         match object {
             &Object::Bool(ref value) => value.into(),
+            &Object::Basic(ref value) => value.into(),
             &Object::Dict(ref value) => value.into(),
             &Object::Float(ref value) => value.into(),
             &Object::Bytes(ref value) => value.into(),
@@ -90,6 +94,17 @@ impl<'a> From<&'a Object> for ObjectRef<'a> {
     }
 }
 
+#[derive(Scan)]
+pub struct BasicObject {
+    pub ty: G<TypeObject>,
+    pub dict: HashMap<Vec<u8>, Object>,
+}
+
+impl ObjectTrait for BasicObject {
+    fn get_type(&self) -> G<TypeObject> {
+        self.ty.clone()
+    }
+}
 
 #[derive(Scan)]
 pub struct ExceptionObject {
@@ -151,12 +166,19 @@ impl ExceptionObject {
         }
         .into_gc())
     }
+
+    pub fn key_error(key: Object) -> Result<G<ExceptionObject>> {
+        Ok(ExceptionObject {
+            ty: G_KEYERROR.clone(),
+            args: TupleObject::new1(key)?
+        }.into_gc())
+    }
 }
 
 #[derive(Scan)]
 pub struct DictObject {
     pub ty: G<TypeObject>,
-    dict: HashMap<i64, Object>,
+    pub dict: GDict<Object>,
 }
 
 impl ObjectTrait for DictObject {
@@ -262,6 +284,7 @@ mod bytes_object {
     unsafe impl Immutable for BytesObject {}
 }
 pub use bytes_object::BytesObject;
+use crate::gdict::GDict;
 
 pub trait ObjectTrait: GcDrop + Scan + ToScan + Send + Sync + 'static {
     fn get_attr_inner(_this: &G<Self>, name: &[u8], _gil: &GCellOwner) -> ObjectResult {
@@ -679,6 +702,11 @@ lazy_static! {
         constructor: &{builtins::exc_constructor},
     }.into_gc();
     pub static ref G_VALUEERROR: G<TypeObject> = TypeObject {
+        ty: None,
+        base_class: Some(G_EXCEPTION.clone()),
+        constructor: &{builtins::exc_constructor},
+    }.into_gc();
+    pub static ref G_KEYERROR: G<TypeObject> = TypeObject {
         ty: None,
         base_class: Some(G_EXCEPTION.clone()),
         constructor: &{builtins::exc_constructor},

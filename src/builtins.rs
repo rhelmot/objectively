@@ -7,10 +7,10 @@ use crate::{
     object::{
         yield_gil, ExceptionObject, FloatObject, GcGCellExt, IntObject, Object, ObjectResult,
         ObjectTrait, TupleObject, TypeObject, VecResult, G_FALSE, G_NONE, G_STOPITERATION, Gil,
-        Result
+        Result, G
     },
 };
-use crate::object::bool_raw;
+use crate::object::{bool_raw, DictObject};
 
 fn raw_is(obj1: &Object, obj2: &Object) -> bool {
     obj1.raw_id() == obj2.raw_id()
@@ -280,4 +280,22 @@ pub fn eq_inner(gil: &mut Gil, one: Object, two: Object) -> Result<bool> {
     } else {
         Err(ExceptionObject::type_error("__eq__ must return bool")?)
     }
+}
+
+pub fn dict_getitem(gil: &mut Gil, _this: Object, args: TupleObject) -> ObjectResult {
+    match args.data.as_slice() {
+        [Object::Dict(self_), key] => {
+            match dict_getitem_inner(gil, self_, key.clone())? {
+                None => Err(ExceptionObject::key_error(key.clone())?),
+                Some(val) => Ok(val),
+            }
+        },
+        _ => {
+            Err(ExceptionObject::type_error("Excepted two arguments: (dict, *)")?)
+        }
+    }
+}
+
+pub fn dict_getitem_inner(gil: &mut Gil, dict: &G<DictObject>, key: Object) -> Result<Option<Object>> {
+    dict.get().rw(gil).dict.get(gil, key).map(|oo| oo.map(|o| o.clone()))
 }
