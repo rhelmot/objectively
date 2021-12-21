@@ -193,6 +193,25 @@ impl DictObject {
     }
 }
 
+impl HasDict<Object> for G<DictObject> {
+    fn get_dict<'a>(&'a self, gil: &'a Gil) -> &'a GDict<Object> {
+        &self.get().ro(gil).dict
+    }
+
+    fn get_dict_mut<'a>(&'a self, gil: &'a mut Gil) -> &'a mut GDict<Object> {
+        &mut self.get().rw(gil).dict
+    }
+}
+impl HasDict<Object> for &G<DictObject> {
+    fn get_dict<'a>(&'a self, gil: &'a Gil) -> &'a GDict<Object> {
+        &self.get().ro(gil).dict
+    }
+
+    fn get_dict_mut<'a>(&'a self, gil: &'a mut Gil) -> &'a mut GDict<Object> {
+        &mut self.get().rw(gil).dict
+    }
+}
+
 #[derive(Scan)]
 pub struct FunctionObject {
     pub ty: G<TypeObject>,
@@ -284,7 +303,7 @@ mod bytes_object {
     unsafe impl Immutable for BytesObject {}
 }
 pub use bytes_object::BytesObject;
-use crate::gdict::GDict;
+use crate::gdict::{GDict, HasDict};
 
 pub trait ObjectTrait: GcDrop + Scan + ToScan + Send + Sync + 'static {
     fn get_attr_inner(_this: &G<Self>, name: &[u8], _gil: &GCellOwner) -> ObjectResult {

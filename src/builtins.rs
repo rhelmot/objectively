@@ -7,10 +7,10 @@ use crate::{
     object::{
         yield_gil, ExceptionObject, FloatObject, GcGCellExt, IntObject, Object, ObjectResult,
         ObjectTrait, TupleObject, TypeObject, VecResult, G_FALSE, G_NONE, G_STOPITERATION, Gil,
-        Result, G
+        Result, G, bool_raw, DictObject
     },
 };
-use crate::object::{bool_raw, DictObject};
+use crate::gdict::GDict;
 
 fn raw_is(obj1: &Object, obj2: &Object) -> bool {
     obj1.raw_id() == obj2.raw_id()
@@ -297,5 +297,9 @@ pub fn dict_getitem(gil: &mut Gil, _this: Object, args: TupleObject) -> ObjectRe
 }
 
 pub fn dict_getitem_inner(gil: &mut Gil, dict: &G<DictObject>, key: Object) -> Result<Option<Object>> {
-    dict.get().rw(gil).dict.get(gil, key).map(|oo| oo.map(|o| o.clone()))
+    if let Some(v) = GDict::get(gil, dict, key)? {
+        Ok(Some(v.clone()))
+    } else {
+        Ok(None)
+    }
 }
