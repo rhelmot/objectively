@@ -1,12 +1,13 @@
+use std::marker::PhantomData;
+use std::ops::{Deref, DerefMut};
 use hashbrown::raw::{RawTable, RawIter, RawIterHash, Bucket};
 use shredder::{Scan, Scanner};
 use shredder::marker::{GcDrop, GcDeref, GcSafe};
-use crate::gcell::GCellOwner;
 
-use crate::object::{G, Object, TupleObject, Result, ObjectResult, ExceptionObject, GcGCellExt, Gil, NullResult, MEMORYERROR_INST};
+use crate::object::{Object, Result, ExceptionObject, Gil, NullResult, MEMORYERROR_INST};
 use crate::builtins::{eq_inner, hash_inner};
 
-struct GDictEntry<T> {
+pub struct GDictEntry<T> {
     hash: u64,
     key: Object,
     value: T
@@ -20,37 +21,41 @@ pub struct GDict<T> {
     table: RawTable<GDictEntry<T>>,
     generation: u64,
 }
-pub trait HasDict<T>: Clone {
-    fn get_dict<'a>(&'a self, gil: &'a Gil) -> &'a GDict<T>;
-    fn get_dict_mut<'a>(&'a self, gil: &'a mut Gil) -> &'a mut GDict<T>;
+pub trait HasDict<T>: Clone where T: Scan {
+    type Deref<'a>: Deref<Target=GDict<T>> where Self: 'a;
+    fn get_dict<'a>(&'a self, gil: &'a Gil) -> Self::Deref<'a>;
+    type DerefMut<'a>: DerefMut<Target=GDict<T>> where Self: 'a;
+    fn get_dict_mut<'a>(&'a self, gil: &'a mut Gil) -> Self::DerefMut<'a>;
 }
 
-pub struct GDictIterator<T, F> {
+pub struct GDictIterator<'a, T, F: 'a> {
     dict_fn: F,
     generation: u64,
     iter: RawIter<GDictEntry<T>>,
+    _phantom: PhantomData<&'a F>,
 }
-pub struct GDictMutIterator<T, F> {
+pub struct GDictMutIterator<'a, T, F: 'a> {
     dict_fn: F,
     generation: u64,
     iter: RawIter<GDictEntry<T>>,
     current_bucket: Option<Bucket<GDictEntry<T>>>,
+    _phantom: PhantomData<&'a F>,
 }
-pub struct GDictHashIterator<T, F> {
+pub struct GDictHashIterator<'a, T, F> {
     dict_fn: F,
     generation: u64,
     hash: u64,
-    iter: RawIterHash<'static, GDictEntry<T>>,
+    iter: RawIterHash<'a, GDictEntry<T>>,
 }
-pub struct GDictMutHashIterator<T, F> {
+pub struct GDictMutHashIterator<'a, T, F: 'a> {
     dict_fn: F,
     generation: u64,
     hash: u64,
-    iter: RawIterHash<'static, GDictEntry<T>>,
+    iter: RawIterHash<'a, GDictEntry<T>>,
     current_bucket: Option<Bucket<GDictEntry<T>>>,
 }
 
-impl<T> GDict<T> {
+impl<T> GDict<T> where T: Scan {
     pub fn new() -> GDict<T> {
         GDict {
             table: RawTable::new(),
@@ -65,12 +70,12 @@ impl<T> GDict<T> {
             *cell = value;
         } else {
             // why no try_insert method :(
-            let this = this_fn.get_dict_mut(gil);
+            let mut this = this_fn.get_dict_mut(gil);
             if this.table.try_reserve(1, entry_hasher).is_err() {
                 return Err(MEMORYERROR_INST.clone());
             }
             this.generation += 1;
-            this.table.try_insert_no_grow(hash, GDictEntry { hash, key, value, });
+            this.table.try_insert_no_grow(hash, GDictEntry { hash, key, value, }).unwrap_or_else(|_| unreachable!());
         }
 
         Ok(())
@@ -86,7 +91,7 @@ impl<T> GDict<T> {
         let mut iter = GDictMutHashIterator::new(gil, this_fn, hash);
         loop {
             if let Some(entry) = iter.next(gil)? {
-                if eq_inner(gil, key.clone(), entry.key.clone())? {
+                if eq_inner(gil, &key, entry.key.clone())? {
                     return Ok(Some(iter.pop(gil)?));
                 }
             } else {
@@ -99,7 +104,7 @@ impl<T> GDict<T> {
         let mut iter = GDictMutHashIterator::new(gil, this_fn, hash);
         loop {
             if let Some(entry) = iter.next(gil)? {
-                if eq_inner(gil, key.clone(), entry.key.clone())? {
+                if eq_inner(gil, &key, entry.key.clone())? {
                     return Ok(Some(&mut entry.value));
                 }
             } else {
@@ -111,9 +116,8 @@ impl<T> GDict<T> {
     fn raw_get<'a>(gil: &'a mut Gil, this_fn: impl HasDict<T> + 'a, key: Object, hash: u64) -> Result<Option<&'a T>> {
         let mut iter = GDictHashIterator::new(gil, this_fn, hash);
         loop {
-            let next = iter.next(gil)?.clone();
-            if let Some(entry) = next {
-                if eq_inner(gil, key.clone(), entry.key.clone())? {
+            if let Some(entry) = iter.next(gil)? {
+                if eq_inner(gil, &key, entry.key.clone())? {
                     return Ok(Some(&entry.value));
                 }
             } else {
@@ -123,19 +127,20 @@ impl<T> GDict<T> {
     }
 }
 
-impl<T, F> GDictIterator<T, F>
-where F: HasDict<T> {
-    pub fn new(gil: &Gil, mut dict: F) -> GDictIterator<T, F> {
+impl<'a, T, F> GDictIterator<'a, T, F>
+where F: HasDict<T> + 'a, T: Scan {
+    pub fn new(gil: &Gil, dict: F) -> Self {
         let theref = dict.get_dict(gil);
         GDictIterator {
             dict_fn: dict.clone(),
             generation: theref.generation,
             iter: unsafe { theref.table.iter() },
+            _phantom: PhantomData
         }
     }
 
     pub fn next(&mut self, gil: &Gil) -> Result<Option<&GDictEntry<T>>> {
-        let dict: &GDict<T> = self.dict_fn.get_dict(gil);
+        let dict = self.dict_fn.get_dict(gil);
         if dict.generation != self.generation {
             return Err(ExceptionObject::runtime_error("Dict keys were modified during iteration")?);
         }
@@ -148,20 +153,21 @@ where F: HasDict<T> {
     }
 }
 
-impl<T, F> GDictMutIterator<T, F>
-where F: HasDict<T> {
-    pub fn new(gil: &mut Gil, mut dict: F) -> GDictMutIterator<T, F> {
+impl<'a, T, F> GDictMutIterator<'a, T, F>
+where F: HasDict<T> + 'a, T: Scan {
+    pub fn new(gil: &mut Gil, dict: F) -> Self {
         let theref = dict.get_dict_mut(gil);
         GDictMutIterator {
             dict_fn: dict.clone(),
             generation: theref.generation,
             iter: unsafe { theref.table.iter() },
             current_bucket: None,
+            _phantom: PhantomData,
         }
     }
 
     pub fn next(&mut self, gil: &mut Gil) -> Result<Option<&mut GDictEntry<T>>> {
-        let dict: &mut GDict<T> = self.dict_fn.get_dict_mut(gil);
+        let dict = self.dict_fn.get_dict_mut(gil);
         if dict.generation != self.generation {
             return Err(ExceptionObject::runtime_error("Dict keys were modified during iteration")?);
         }
@@ -177,7 +183,7 @@ where F: HasDict<T> {
     }
 
     pub fn pop(&mut self, gil: &mut Gil) -> Result<T> {
-        let dict: &mut GDict<T> = self.dict_fn.get_dict_mut(gil);
+        let mut dict = self.dict_fn.get_dict_mut(gil);
         if dict.generation != self.generation {
             return Err(ExceptionObject::runtime_error("Dict keys were modified during iteration")?);
         }
@@ -190,9 +196,9 @@ where F: HasDict<T> {
     }
 }
 
-impl<T, F> GDictHashIterator<T, F>
-    where F: HasDict<T> {
-    pub fn new(gil: &Gil, mut dict: F, hash: u64) -> GDictHashIterator<T, F> {
+impl<'a, T, F> GDictHashIterator<'a, T, F>
+    where F: HasDict<T> + 'a, T: Scan {
+    pub fn new(gil: &Gil, dict: F, hash: u64) -> Self {
         let theref = dict.get_dict(gil);
         GDictHashIterator {
             dict_fn: dict.clone(),
@@ -203,8 +209,8 @@ impl<T, F> GDictHashIterator<T, F>
         }
     }
 
-    pub fn next(&mut self, gil: &Gil) -> Result<Option<&GDictEntry<T>>> {
-        let dict: &GDict<T> = self.dict_fn.get_dict(gil);
+    pub fn next(&mut self, gil: &Gil) -> Result<Option<&'a GDictEntry<T>>> {
+        let dict = self.dict_fn.get_dict(gil);
         if dict.generation != self.generation {
             return Err(ExceptionObject::runtime_error("Dict keys were modified during iteration")?);
         }
@@ -224,9 +230,9 @@ impl<T, F> GDictHashIterator<T, F>
     }
 }
 
-impl<T, F> GDictMutHashIterator<T, F>
-    where F: HasDict<T> {
-    pub fn new(gil: &mut Gil, dict: F, hash: u64) -> GDictMutHashIterator<T, F> {
+impl<'a, T, F> GDictMutHashIterator<'a, T, F>
+    where F: HasDict<T> + 'a, T: Scan {
+    pub fn new(gil: &mut Gil, dict: F, hash: u64) -> Self {
         let theref = dict.get_dict_mut(gil);
         GDictMutHashIterator {
             dict_fn: dict.clone(),
@@ -238,8 +244,8 @@ impl<T, F> GDictMutHashIterator<T, F>
         }
     }
 
-    pub fn next(&mut self, gil: &mut Gil) -> Result<Option<&mut GDictEntry<T>>> {
-        let dict: &mut GDict<T> = self.dict_fn.get_dict_mut(gil);
+    pub fn next(&mut self, gil: &mut Gil) -> Result<Option<&'a mut GDictEntry<T>>> {
+        let dict = self.dict_fn.get_dict_mut(gil);
         if dict.generation != self.generation {
             return Err(ExceptionObject::runtime_error("Dict keys were modified during iteration")?);
         }
@@ -260,7 +266,7 @@ impl<T, F> GDictMutHashIterator<T, F>
     }
 
     pub fn pop(&mut self, gil: &mut Gil) -> Result<T> {
-        let dict: &mut GDict<T> = self.dict_fn.get_dict_mut(gil);
+        let mut dict = self.dict_fn.get_dict_mut(gil);
         if dict.generation != self.generation {
             return Err(ExceptionObject::runtime_error("Dict keys were modified during iteration")?);
         }

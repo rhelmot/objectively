@@ -273,7 +273,7 @@ pub fn hash(
     }
 }
 
-pub fn eq_inner(gil: &mut Gil, one: Object, two: Object) -> Result<bool> {
+pub fn eq_inner(gil: &mut Gil, one: &Object, two: Object) -> Result<bool> {
     let h: Object = one.call_method("__eq__", gil, TupleObject::new1(two)?)?;
     if let Object::Bool(b) = h {
         Ok(bool_raw(b))

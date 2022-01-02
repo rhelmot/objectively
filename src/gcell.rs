@@ -4,10 +4,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 
-use shredder::{
-    marker::{GcDrop, GcSafe},
-    Scan, Scanner,
-};
+use shredder::{GcGuard, marker::{GcDrop, GcSafe}, Scan, Scanner};
 
 pub struct GCell<T: ?Sized>(UnsafeCell<T>);
 
@@ -34,6 +31,9 @@ impl<T> GCell<T> {
 
 pub struct Ref<'a, R: Deref<Target = GCell<T>>, T: ?Sized>(pub R, pub &'a GCellOwner);
 pub struct RefMut<'a, R: Deref<Target = GCell<T>>, T: ?Sized>(pub R, pub &'a mut GCellOwner);
+
+pub(crate) type GcRef<'a, T> = Ref<'a, GcGuard<'a, GCell<T>>, T>;
+pub(crate) type GcRefMut<'a, T> = RefMut<'a, GcGuard<'a, GCell<T>>, T>;
 
 impl<T: ?Sized> GCell<T> {
     pub fn ro<'a>(&'a self, _lock: &'a GCellOwner) -> &'a T {

@@ -1,11 +1,12 @@
 use std::{collections::HashMap, convert::TryInto, ops::Deref, vec::Vec};
+use std::ops::DerefMut;
 
 use enum_dispatch::enum_dispatch;
 use lazy_static::lazy_static;
 use parking_lot::{Mutex, MutexGuard};
 use shredder::{marker::GcDrop, Gc, Scan, ToScan};
 
-use crate::{builtins, gcell::{GCell, GCellOwner}};
+use crate::{builtins, gcell::{GCell, GCellOwner}, gcell};
 
 pub type Gil<'a> = MutexGuard<'a, GCellOwner>;
 pub type G<T> = Gc<GCell<T>>;
@@ -181,6 +182,30 @@ pub struct DictObject {
     pub dict: GDict<Object>,
 }
 
+pub struct DerefDict<'a>(gcell::GcRef<'a, DictObject>);
+pub struct DerefMutDict<'a>(gcell::GcRefMut<'a, DictObject>);
+
+impl <'a> Deref for DerefDict<'a> {
+    type Target = GDict<Object>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0.dict
+    }
+}
+
+impl <'a> Deref for DerefMutDict<'a> {
+    type Target = GDict<Object>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0.dict
+    }
+}
+impl <'a> DerefMut for DerefMutDict<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0.dict
+    }
+}
+
 impl ObjectTrait for DictObject {
     fn get_type(&self) -> G<TypeObject> {
         self.ty.clone()
@@ -193,22 +218,15 @@ impl DictObject {
     }
 }
 
-impl HasDict<Object> for G<DictObject> {
-    fn get_dict<'a>(&'a self, gil: &'a Gil) -> &'a GDict<Object> {
-        &self.get().ro(gil).dict
-    }
-
-    fn get_dict_mut<'a>(&'a self, gil: &'a mut Gil) -> &'a mut GDict<Object> {
-        &mut self.get().rw(gil).dict
-    }
-}
 impl HasDict<Object> for &G<DictObject> {
-    fn get_dict<'a>(&'a self, gil: &'a Gil) -> &'a GDict<Object> {
-        &self.get().ro(gil).dict
+    type Deref<'a> where Self: 'a = DerefDict<'a>;
+    fn get_dict<'a>(&'a self, gil: &'a Gil) -> DerefDict {
+        DerefDict(gcell::Ref(self.get(), gil))
     }
 
-    fn get_dict_mut<'a>(&'a self, gil: &'a mut Gil) -> &'a mut GDict<Object> {
-        &mut self.get().rw(gil).dict
+    type DerefMut<'a> where Self: 'a = DerefMutDict<'a>;
+    fn get_dict_mut<'a>(&'a self, gil: &'a mut Gil) -> DerefMutDict {
+        DerefMutDict(gcell::RefMut(self.get(), gil))
     }
 }
 

@@ -1,6 +1,6 @@
 #![feature(ptr_metadata)]
 #![feature(cursor_remaining)]
-#![feature(try_reserve)]
+#![feature(generic_associated_types)]
 #![feature(result_into_ok_or_err)]
 
 mod builtins;
