@@ -181,6 +181,14 @@ pub fn bytes_constructor(
     todo!()
 }
 
+pub fn dict_constructor(
+    _gil: &mut MutexGuard<GCellOwner>,
+    _this: Object,
+    _args: TupleObject,
+) -> ObjectResult {
+    todo!()
+}
+
 pub fn bool_constructor(
     gil: &mut MutexGuard<GCellOwner>,
     _this: Object,

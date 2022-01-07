@@ -219,7 +219,7 @@ impl DictObject {
 
     pub fn new() -> Result<G<DictObject>> {
         Ok(DictObject {
-            ty: G_KEYERROR.clone(),
+            ty: G_D.clone(),
             dict: GDict::new(),
         }.into_gc())
     }
@@ -701,6 +701,12 @@ lazy_static! {
         base_class: Some(OBJECT_TYPE.clone()),
         // members: HashMap::new(),
         constructor: &{builtins::bytes_constructor},
+    }.into_gc();
+    pub static ref G_DICT: G<TypeObject> = TypeObject {
+        ty: None,
+        base_class: Some(OBJECT_TYPE.clone()),
+        // members: HashMap::new(),
+        constructor: &{builtins::dict_constructor},
     }.into_gc();
     pub static ref G_NONETYPE: G<TypeObject> = TypeObject {
         ty: None,
