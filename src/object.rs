@@ -219,7 +219,7 @@ impl DictObject {
 
     pub fn new() -> Result<G<DictObject>> {
         Ok(DictObject {
-            ty: G_D.clone(),
+            ty: G_DICT.clone(),
             dict: GDict::new(),
         }.into_gc())
     }
