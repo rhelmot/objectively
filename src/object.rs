@@ -216,6 +216,13 @@ impl DictObject {
     fn to_namespace(&self) -> Result<HashMap<String, Object>> {
         todo!()
     }
+
+    pub fn new() -> Result<G<DictObject>> {
+        Ok(DictObject {
+            ty: G_KEYERROR.clone(),
+            dict: GDict::new(),
+        }.into_gc())
+    }
 }
 
 impl HasDict<Object> for &G<DictObject> {
