@@ -1,4 +1,6 @@
 use std::{convert::TryInto, ops::Deref, thread, time};
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 
 use parking_lot::MutexGuard;
 
@@ -309,5 +311,30 @@ pub fn dict_getitem_inner(gil: &mut Gil, dict: &G<DictObject>, key: Object) -> R
         Ok(Some(v.clone()))
     } else {
         Ok(None)
+    }
+}
+
+pub fn int_hash(_gil: &mut Gil, _this: Object, args: TupleObject) -> ObjectResult {
+    match args.data.as_slice() {
+        [Object::Int(_)] => {
+            Ok(args.data[0].clone())
+        },
+        _ => {
+            Err(ExceptionObject::type_error("Expected one argument: int")?)
+        }
+    }
+}
+
+pub fn bytes_hash(gil: &mut Gil, _this: Object, args: TupleObject) -> ObjectResult {
+    match args.data.as_slice() {
+        [Object::Bytes(g_bytes)] => {
+            let unwrapped = g_bytes.get().ro(gil);
+            let mut hasher = DefaultHasher::new();
+            unwrapped.value.hash(&mut hasher);
+            Ok(IntObject::new(hasher.finish() as i64)?.into())
+        },
+        _ => {
+            Err(ExceptionObject::type_error("Expected one argument: bytes")?)
+        }
     }
 }

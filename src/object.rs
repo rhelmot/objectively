@@ -75,6 +75,11 @@ impl Object {
     pub fn as_ref(&self) -> ObjectRef<'_> {
         self.into()
     }
+
+    pub fn get_attr_full(&self, gil: Gil, name: ObjectRef) -> ObjectResult {
+        // try self
+        if let Ok(self.get_attr(gil, name)
+    }
 }
 
 impl<'a> From<&'a Object> for ObjectRef<'a> {
@@ -240,9 +245,7 @@ impl HasDict<Object> for &G<DictObject> {
 #[derive(Scan)]
 pub struct FunctionObject {
     pub ty: G<TypeObject>,
-    data: Object,
     func: &'static fn(
-        ObjectRef,
         ObjectRef,
         &mut MutexGuard<GCellOwner>,
         G<TupleObject>,
@@ -252,19 +255,37 @@ pub struct FunctionObject {
 impl ObjectTrait for FunctionObject {
     fn call(
         this: &G<Self>,
-        this_param: ObjectRef,
         gil: &mut MutexGuard<GCellOwner>,
         args: G<TupleObject>,
     ) -> ObjectResult {
-        let this = this.get();
-        let fun_obj = this.ro(gil);
+        let fun_obj = this.get().ro(gil);
         let f = *fun_obj.func;
-        let data = fun_obj.data.clone();
-        f(data.as_ref(), this_param, gil, args)
+        f(this.into_object(), gil, args)
     }
 
     fn get_type(&self) -> G<TypeObject> {
         self.ty.clone()
+    }
+}
+
+#[derive(Scan)]
+pub struct BoundMethodObject {
+    ty: G<TypeObject>,
+    func: Object,
+    self_param: Object,
+}
+
+impl ObjectTrait for BoundMethodObject {
+    fn get_type(&self) -> G<TypeObject> {
+        self.ty.clone()
+    }
+
+    fn call(this: &G<Self>, gil: &mut MutexGuard<GCellOwner>, args: G<TupleObject>) -> ObjectResult {
+        let mut new_args = vec![this.get().ro(gil).self_param.clone()];
+        new_args.extend(args.get().ro(gil).data.iter());
+        let new_args = TupleObject::new(new_args);
+        let f = &this.get().ro(gil).func;
+        f.call(this, gil, new_args)
     }
 }
 
@@ -303,6 +324,28 @@ mod bytes_object {
     impl ObjectTrait for BytesObject {
         fn get_type(&self) -> G<TypeObject> {
             self.ty.clone()
+        }
+
+        fn get_attr_inner(this: &G<Self>, name: &[u8], gil: &GCellOwner) -> ObjectResult {
+            if name == b"len" {
+                match this.get().ro(gil).data.len().try_into() {
+                    Ok(v) => {
+                        let int = IntObject::new(v)?;
+                        Ok(int.into())
+                    }
+                    Err(_) => Err(ExceptionObject::overflow_error(
+                        "could not fit bytes length into integer object",
+                    )?),
+                }
+            } else if name == b"__hash__" {
+                Ok(FunctionObject {
+                    ty: G_FUNCTION.clone(),
+                    data: this.clone().into(),
+                    func: &{builtins::bytes_hash},
+                }.into_object())
+            } else {
+                Err(ExceptionObject::attribute_error_bytes(name)?)
+            }
         }
     }
 
@@ -350,7 +393,6 @@ pub trait ObjectTrait: GcDrop + Scan + ToScan + Send + Sync + 'static {
 
     fn call(
         _this: &G<Self>,
-        _this_param: ObjectRef,
         _gil: &mut MutexGuard<GCellOwner>,
         _args: G<TupleObject>,
     ) -> ObjectResult {
@@ -439,7 +481,6 @@ where
 
     fn call(
         &self,
-        this_param: ObjectRef,
         gil: &mut MutexGuard<GCellOwner>,
         args: G<TupleObject>,
     ) -> ObjectResult;
@@ -478,11 +519,10 @@ where
 
     fn call(
         &self,
-        this_param: ObjectRef<'_>,
         gil: &mut MutexGuard<GCellOwner>,
         args: G<TupleObject>,
     ) -> ObjectResult {
-        T::call(self, this_param, gil, args)
+        T::call(self, gil, args)
     }
 
     fn call_method(
@@ -520,7 +560,7 @@ pub struct TupleObject {
 
 impl ObjectTrait for TupleObject {
     fn get_attr_inner(this: &G<Self>, name: &[u8], gil: &GCellOwner) -> ObjectResult {
-        if name == "len".as_bytes() {
+        if name == b"len" {
             match this.get().ro(gil).data.len().try_into() {
                 Ok(v) => {
                     let int = IntObject::new(v)?;
@@ -605,8 +645,15 @@ impl ObjectTrait for IntObject {
                         Ok(int.to_owned())
                     }
                 },
-            }
-            .into_object())
+            }.into_object())
+        } else if name == b"__hash__" {
+            Ok(FunctionObject {
+                ty: G_FUNCTION.clone(),
+                data: this.clone().into(),
+                func: &{|int: ObjectRef, _: ObjectRef, gil: &mut Gil, args: TupleObject| {
+                    builtins::int_hash()
+                }},
+            }.into_object())
         } else {
             Err(ExceptionObject::attribute_error_bytes(name)?)
         }
@@ -662,7 +709,6 @@ where
 {
     MutexGuard::unlocked(guard, func);
 }
-
 
 lazy_static! {
     pub static ref GIL: Mutex<GCellOwner> = Mutex::new(GCellOwner::make());
@@ -767,6 +813,11 @@ lazy_static! {
         constructor: &{builtins::exc_constructor},
     }.into_gc();
     pub static ref G_FUNCTION: G<TypeObject> = TypeObject {
+        ty: None,
+        base_class: Some(OBJECT_TYPE.clone()),
+        constructor: &{builtins::null_constructor},
+    }.into_gc();
+    pub static ref G_BOUNDMETHOD: G<TypeObject> = TypeObject {
         ty: None,
         base_class: Some(OBJECT_TYPE.clone()),
         constructor: &{builtins::null_constructor},
